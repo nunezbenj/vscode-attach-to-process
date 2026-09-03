@@ -88,9 +88,9 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 
 ## Troubleshooting & Reporting Bugs
 
-> — *"Hey, the extension crashed."*
-> — *"Run **Attach: Copy Diagnostic Report** and paste it into an issue — no need to reproduce."*
-> — *"But I already reloaded the window…"*
+> — *"Hey, the extension crashed."*\
+> — *"Run **Attach: Copy Diagnostic Report** and paste it into an issue — no need to reproduce."*\
+> — *"But I already reloaded the window…"*\
 > — *"Doesn't matter — **Attach: Open Previous Session Logs**, grab the file from the crashed session."*
 
 That's the whole workflow. The extension always logs its activity to a file — you do **not** need to reproduce a problem to report it.
