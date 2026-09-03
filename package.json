@@ -1,0 +1,172 @@
+{
+  "name": "pycharm-attach",
+  "displayName": "PyCharm-like Attach to Process",
+  "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
+  "version": "1.0.0",
+  "icon": "images/icon.png",
+  "publisher": "nunezbenj",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nunezbenj/vscode-attach-to-process.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "extensionDependencies": [
+    "ms-python.debugpy"
+  ],
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "attach",
+    "process",
+    "debugpy",
+    "python",
+    "debug",
+    "pycharm",
+    "remote",
+    "ssh"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "attach.pickProcess",
+        "title": "Attach to Running Python Process...",
+        "category": "Attach",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "attach.connect",
+        "title": "Connect to Listening debugpy (host:port)...",
+        "category": "Attach"
+      },
+      {
+        "command": "attach.copyListenCommand",
+        "title": "Copy Debug-Ready Launch Command",
+        "category": "Attach"
+      },
+      {
+        "command": "attach.checkReadiness",
+        "title": "Check Server Readiness (gdb, ptrace)",
+        "category": "Attach"
+      },
+      {
+        "command": "attach.showLog",
+        "title": "Show Log",
+        "category": "Attach"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "attach.pickProcess",
+          "when": "view == workbench.debug.callStack || view == workbench.debug.welcome",
+          "group": "navigation@0"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "attach.pickProcess"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "debug",
+        "contents": "Debug a script that is already running, no launch.json needed:\n[$(plug) Attach to Running Python Process](command:attach.pickProcess)\nSet your breakpoints, run the script from any terminal or SSH session, then pick it here."
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "attach.pickProcess",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
+      }
+    ],
+    "configuration": {
+      "title": "Attach to Process",
+      "properties": {
+        "attach.justMyCode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pass justMyCode to debugpy. Set to false to step into library and framework code."
+        },
+        "attach.processFilter": {
+          "type": "string",
+          "default": "",
+          "description": "Regular expression applied to the full command line. Only matching Python processes are listed (empty = list all of yours)."
+        },
+        "attach.showHiddenProcesses": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also list editor tooling (debugpy adapters, VS Code Server helpers, language servers). You can toggle this from the picker too."
+        },
+        "attach.defaultHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Default host for 'Connect to Listening debugpy'."
+        },
+        "attach.defaultPort": {
+          "type": "number",
+          "default": 5678,
+          "description": "Default port for 'Connect to Listening debugpy' and for the copied launch command."
+        },
+        "attach.pathMappings": {
+          "type": "array",
+          "default": [],
+          "description": "Optional debugpy pathMappings ({localRoot, remoteRoot}) added to every attach. Not needed for Remote-SSH, where the extension runs on the server.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "localRoot": { "type": "string" },
+              "remoteRoot": { "type": "string" }
+            }
+          }
+        },
+        "attach.subProcess": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pass subProcess to debugpy so child processes spawned after attaching are debugged too."
+        },
+        "attach.extraConfig": {
+          "type": "object",
+          "default": {},
+          "description": "Extra keys merged into the generated debug configuration (escape hatch, e.g. {\"logToFile\": true})."
+        },
+        "attach.showStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the 'Attach' button in the status bar."
+        },
+        "attach.verboseLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log every process considered by the picker (and why it was hidden) to the Output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "mocha"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "mocha": "^11.7.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  }
+}

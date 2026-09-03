@@ -1,0 +1,14 @@
+.vscode/**
+.vscode-test/**
+src/**
+test-python/**
+node_modules/**
+.gitignore
+.mocharc.yml
+tsconfig.json
+**/*.map
+**/*.ts
+generate_icon.py
+TODO.md
+images/icon.svg
+out/test/**
