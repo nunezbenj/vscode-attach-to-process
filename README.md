@@ -96,6 +96,14 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 - The `frozen modules` warning debugpy prints is benign for your code.
 - **Filing a bug**: turn on `attach.verboseLogging` (and `attach.debugpyLogToFile` for injection problems), reproduce, then run *Attach: Report a Bug…* — it copies the environment, settings and recent log to your clipboard and opens a prefilled issue. Skim the bundle for hostnames or paths you'd rather not share before posting.
 
+## Bugs and feature requests
+
+Please file them at [github.com/nunezbenj/vscode-attach-to-process/issues](https://github.com/nunezbenj/vscode-attach-to-process/issues).
+
+For a bug, run **Attach: Report a Bug…** from the Command Palette (or the `…` menu of the Attach panel) first: it copies the environment, your `attach.*` settings and the recent log to the clipboard and opens a prefilled issue. Turning on `attach.verboseLogging` before reproducing makes the log a lot more useful. Include which host the process runs on (local vs Remote-SSH) and the command line of the process you tried to attach to.
+
+Feature requests are welcome too — a sentence on the workflow you're trying to make faster is enough.
+
 ## Development
 
 ```bash
