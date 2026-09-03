@@ -1,6 +1,6 @@
 [![License](https://img.shields.io/github/license/nunezbenj/vscode-attach-to-process)](LICENSE)
 
-# PyCharm-like Attach to Process
+# Python: Attach to Running Process
 
 Attach the VS Code Python debugger to a **script that is already running** — from a picker, with no `launch.json`.
 
@@ -8,7 +8,7 @@ Attach the VS Code Python debugger to a **script that is already running** — f
 2. Run the script from wherever you like: the integrated terminal, a plain SSH session, `tmux`, a cron job.
 3. Press `Ctrl+Alt+A` (or click **Attach** in the status bar), pick the process, done. Your breakpoints are live.
 
-Same effect as adding an attach entry to `.vscode/launch.json` and launching from the IDE, minus the ceremony. Inspired by PyCharm's *Run → Attach to Process…*.
+Same effect as adding an attach entry to `.vscode/launch.json` and launching from the IDE, minus the ceremony.
 
 ## Why
 

@@ -1,6 +1,6 @@
 {
-  "name": "pycharm-attach",
-  "displayName": "PyCharm-like Attach to Process",
+  "name": "python-attach-to-process",
+  "displayName": "Python: Attach to Running Process",
   "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
   "version": "1.0.0",
   "icon": "images/icon.png",
@@ -24,6 +24,7 @@
   ],
   "keywords": [
     "attach",
+    "attach to process",
     "process",
     "debugpy",
     "python",
