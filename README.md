@@ -24,6 +24,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 - **Remote-native** — the extension runs on the remote host under Remote-SSH, so it sees the processes on the server you're connected to.
 - **Preflight with fixes** — checks that `gdb` is installed and `kernel.yama.ptrace_scope` allows attaching, and shows the one-line fix instead of debugpy's traceback wall.
 - **Debug-ready processes** — scripts launched with `python -m debugpy --listen …` are recognized (marked *listening*) and connected to directly instead of injected. There is also a manual **Connect to host:port** command and a **Copy debug-ready launch command** helper for hosts where injection isn't possible.
+- **Stop Process** — VS Code only offers *Disconnect* for attached sessions. The stop button on the toolbar and in the panel disconnects and terminates the process, with confirmation and a force-kill fallback.
 - **Re-attach guard** — warns when you pick a process that was already attached once in this window (see Limitations).
 
 ## Requirements
@@ -45,6 +46,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 | Action | How |
 | --- | --- |
 | Attach to a running process | The **plug icon in the activity bar** (left), the plug icon next to the Run/Debug button in the editor title bar (Python files), `Ctrl+Alt+A`, the **Attach** status-bar item, the plug on the debug toolbar, or Command Palette → *Attach: Attach to Running Python Process…* |
+| Stop a process (like the red Stop button) | The stop button on the debug toolbar, or on any row in the Attach panel — disconnects, sends SIGTERM, offers SIGKILL if needed |
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
 | Verify a server | *Attach: Check Server Readiness (gdb, ptrace)* |

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+- **Stop Process**: red stop button on the debug toolbar (for attach sessions) and on every row of
+  the Attach panel — disconnects, sends SIGTERM, and offers SIGKILL if the process is still alive
+  after 5 s. Asks for confirmation first.
+
 ## 1.1.2
 
 - Reveal the Debug Console when an attach session starts (`attach.debugConsole`, default

@@ -72,6 +72,22 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.commands.registerCommand("attach.refreshView", () => tree?.refresh()),
+    vscode.commands.registerCommand("attach.stopProcess", async (item?: ProcessItem) => {
+      if (item?.proc) {
+        await stopProcess(item.proc.pid, path.basename(displayTarget(item.proc.parsed, item.proc.cwd)));
+        return;
+      }
+      const active = vscode.debug.activeDebugSession;
+      const pid = active?.configuration.processId;
+      if (active && typeof pid === "number") {
+        await stopProcess(pid, String(active.configuration.name).replace(/^Attach: /, "").replace(/ \(pid \d+\)$/, ""));
+        return;
+      }
+      vscode.window.showInformationMessage("No attached process selected. Use the stop button on a row in the Attach panel, or pick a process first.");
+    }),
+    vscode.debug.onDidChangeActiveDebugSession((s) => {
+      void vscode.commands.executeCommand("setContext", "attach.activeSessionIsAttach", typeof s?.configuration.processId === "number");
+    }),
     vscode.commands.registerCommand("attach.showHiddenInView", () => tree?.toggleHidden()),
     vscode.commands.registerCommand("attach.hideHiddenInView", () => tree?.toggleHidden()),
     vscode.commands.registerCommand("attach.copyCommandLine", async (item?: ProcessItem) => {
@@ -505,6 +521,91 @@ async function trackInjection(pid: number, name: string): Promise<void> {
       output.show(true);
     }
     stateByPid.delete(pid);
+    tree?.refresh();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stop process
+// ---------------------------------------------------------------------------
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function waitForExit(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return !isAlive(pid);
+}
+
+/** Disconnect (if attached) and terminate the process — the attach-mode equivalent of the red Stop button. */
+async function stopProcess(pid: number, label: string): Promise<void> {
+  if (!isAlive(pid)) {
+    vscode.window.showInformationMessage(`${label} (pid ${pid}) is not running anymore.`);
+    tree?.refresh();
+    return;
+  }
+  const choice = await vscode.window.showWarningMessage(
+    `Stop ${label} (pid ${pid})?`,
+    { modal: true, detail: "Disconnects the debugger and sends SIGTERM to the process, like the Stop button in a launched session. The process gets a chance to clean up." },
+    "Stop",
+  );
+  if (choice !== "Stop") {
+    return;
+  }
+  const session = activeByPid.get(pid);
+  if (session) {
+    log(`pid ${pid}: disconnecting before stop`);
+    try {
+      await vscode.debug.stopDebugging(session);
+    } catch (e) {
+      log(`pid ${pid}: stopDebugging failed: ${e}`);
+    }
+    await waitForExit(pid, 500); // give the debuggee a moment if disconnect itself terminated it
+  }
+  if (isAlive(pid)) {
+    log(`pid ${pid}: SIGTERM`);
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (e) {
+      vscode.window.showErrorMessage(`Could not signal pid ${pid}: ${(e as Error).message}`);
+      return;
+    }
+  }
+  const exited = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Stopping ${label} (pid ${pid})…` },
+    () => waitForExit(pid, 5000),
+  );
+  tree?.refresh();
+  if (exited) {
+    vscode.window.setStatusBarMessage(`$(check) Stopped ${label} (pid ${pid})`, 5000);
+    log(`pid ${pid}: exited`);
+    return;
+  }
+  const force = await vscode.window.showWarningMessage(
+    `${label} (pid ${pid}) is still running 5 s after SIGTERM.`,
+    "Force kill (SIGKILL)",
+  );
+  if (force) {
+    log(`pid ${pid}: SIGKILL`);
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (e) {
+      vscode.window.showErrorMessage(`Could not kill pid ${pid}: ${(e as Error).message}`);
+      return;
+    }
+    await waitForExit(pid, 2000);
     tree?.refresh();
   }
 }

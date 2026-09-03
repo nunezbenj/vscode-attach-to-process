@@ -2,7 +2,7 @@
   "name": "python-attach-to-process",
   "displayName": "Python: Attach to Running Process",
   "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "icon": "images/icon.png",
   "publisher": "nunezbenj",
   "repository": {
@@ -90,6 +90,12 @@
         "icon": "$(eye-closed)"
       },
       {
+        "command": "attach.stopProcess",
+        "title": "Stop Process",
+        "category": "Attach",
+        "icon": "$(debug-stop)"
+      },
+      {
         "command": "attach.copyCommandLine",
         "title": "Copy Command Line",
         "category": "Attach"
@@ -135,6 +141,11 @@
         }
       ],
       "debug/toolBar": [
+        {
+          "command": "attach.stopProcess",
+          "when": "attach.activeSessionIsAttach",
+          "group": "navigation@98"
+        },
         {
           "command": "attach.pickProcess",
           "group": "navigation@99"
@@ -189,6 +200,16 @@
           "group": "inline@1"
         },
         {
+          "command": "attach.stopProcess",
+          "when": "view == attach.processes && viewItem =~ /^process/",
+          "group": "inline@2"
+        },
+        {
+          "command": "attach.stopProcess",
+          "when": "view == attach.processes && viewItem =~ /^process/",
+          "group": "control@1"
+        },
+        {
           "command": "attach.copyCommandLine",
           "when": "view == attach.processes && viewItem =~ /^process/",
           "group": "copy@1"
@@ -203,6 +224,10 @@
         {
           "command": "attach.attachItem",
           "when": "false"
+        },
+        {
+          "command": "attach.stopProcess",
+          "when": "attach.activeSessionIsAttach"
         },
         {
           "command": "attach.refreshView",
