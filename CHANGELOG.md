@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- Report the real attach outcome: rows show *injecting debugpy…* until debugpy inside the
+  process has connected, then *attached · N threads*; failures show why
+- Progress notification while injecting, with a hint (and Cancel) if it takes more than 15 s
+- Status-bar confirmation with the thread count once attached
+
 ## 1.1.0
 
 - **Attach** panel in the activity bar (the plug icon on the left): lists your running Python

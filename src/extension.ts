@@ -18,6 +18,11 @@ let tree: ProcessTree | undefined;
 const injectedPids = new Set<number>();
 /** Active attach sessions keyed by PID. */
 const activeByPid = new Map<number, vscode.DebugSession>();
+export type AttachState = { phase: "injecting"; since: number } | { phase: "attached"; threads?: number } | { phase: "failed"; reason: string };
+const stateByPid = new Map<number, AttachState>();
+/** Resolvers for the progress notification shown while injecting. */
+const settleByPid = new Map<number, () => void>();
+const INJECT_HINT_MS = 15000;
 
 function log(msg: string): void {
   const ts = new Date().toISOString().slice(11, 23);
@@ -87,6 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (typeof pid === "number") {
           injectedPids.add(pid);
           activeByPid.set(pid, s);
+          stateByPid.set(pid, { phase: "injecting", since: Date.now() });
         }
         tree?.refresh();
       }
@@ -97,6 +103,13 @@ export function activate(context: vscode.ExtensionContext): void {
         const pid = s.configuration.processId;
         if (typeof pid === "number" && activeByPid.get(pid) === s) {
           activeByPid.delete(pid);
+          const st = stateByPid.get(pid);
+          if (st?.phase === "injecting") {
+            stateByPid.set(pid, { phase: "failed", reason: "session ended before debugpy connected" });
+          } else {
+            stateByPid.delete(pid);
+          }
+          settleByPid.get(pid)?.();
         }
         tree?.refresh();
       }
@@ -108,11 +121,40 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  context.subscriptions.push(
+    vscode.debug.registerDebugAdapterTrackerFactory("debugpy", {
+      createDebugAdapterTracker(session) {
+        const pid = session.configuration.processId;
+        if (session.configuration.request !== "attach" || typeof pid !== "number") {
+          return undefined;
+        }
+        return {
+          onDidSendMessage: (m: { type: string; command?: string; success?: boolean; message?: string; event?: string; body?: { category?: string; output?: string } }) => {
+            if (m.type === "response" && m.command === "attach") {
+              if (m.success) {
+                onAttached(session, pid);
+              } else {
+                stateByPid.set(pid, { phase: "failed", reason: m.message ?? "attach request rejected" });
+                log(`pid ${pid}: attach rejected: ${m.message}`);
+                settleByPid.get(pid)?.();
+                tree?.refresh();
+              }
+            } else if (m.type === "event" && m.event === "output" && m.body?.output && settings().verbose) {
+              log(`pid ${pid} [${m.body.category}] ${m.body.output.trimEnd()}`);
+            }
+          },
+          onError: (e: Error) => log(`pid ${pid}: adapter error: ${e.message}`),
+        };
+      },
+    }),
+  );
+
   tree = new ProcessTree({
     log,
     attach: (p) => attachToProcess(p, runPreflight()),
     isActive: (pid) => activeByPid.has(pid),
     wasInjected: (pid) => injectedPids.has(pid),
+    state: (pid) => stateByPid.get(pid),
     settings: () => {
       const s = settings();
       return { processFilter: s.processFilter, showHidden: s.showHidden, verbose: s.verbose };
@@ -366,6 +408,22 @@ async function attachToProcess(p: PythonProcess, preflight: PreflightResult): Pr
   await startAttach({ kind: "pid", pid: p.pid, label });
 }
 
+async function onAttached(session: vscode.DebugSession, pid: number): Promise<void> {
+  stateByPid.set(pid, { phase: "attached" });
+  settleByPid.get(pid)?.();
+  tree?.refresh();
+  try {
+    const r = (await session.customRequest("threads")) as { threads?: unknown[] };
+    const n = r.threads?.length;
+    stateByPid.set(pid, { phase: "attached", threads: n });
+    log(`pid ${pid}: attached, ${n ?? "?"} thread(s) visible`);
+    vscode.window.setStatusBarMessage(`$(check) Attached to pid ${pid} — ${n ?? "?"} thread(s). Pause stops threads running Python; blocked threads stop at their next Python line.`, 8000);
+  } catch (e) {
+    log(`pid ${pid}: attached (threads request failed: ${e})`);
+  }
+  tree?.refresh();
+}
+
 async function startAttach(target: AttachTarget): Promise<void> {
   const s = settings();
   const config = buildAttachConfig(target, s);
@@ -379,8 +437,12 @@ async function startAttach(target: AttachTarget): Promise<void> {
     log(`startDebugging threw: ${e}`);
   }
   if (ok) {
-    vscode.window.setStatusBarMessage(`$(check) ${config.name}`, 5000);
     log(`startDebugging accepted: ${config.name}`);
+    if (target.kind === "pid") {
+      void trackInjection(target.pid, config.name);
+    } else {
+      vscode.window.setStatusBarMessage(`$(check) ${config.name}`, 5000);
+    }
   } else {
     log(`startDebugging failed: ${config.name}`);
     const choice = await vscode.window.showErrorMessage(
@@ -390,6 +452,59 @@ async function startAttach(target: AttachTarget): Promise<void> {
     if (choice === "Show Log") {
       output.show(true);
     }
+  }
+}
+
+/** Notification that lives until debugpy inside the target has connected (or the session dies). */
+async function trackInjection(pid: number, name: string): Promise<void> {
+  if (stateByPid.get(pid)?.phase === "attached") {
+    return;
+  }
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `${name}: injecting debugpy…`, cancellable: true },
+    async (progress, token) => {
+      await new Promise<void>((resolve) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          const st = stateByPid.get(pid);
+          if (!st || st.phase !== "injecting") {
+            return;
+          }
+          const secs = Math.round((Date.now() - started) / 1000);
+          progress.report({
+            message:
+              Date.now() - started > INJECT_HINT_MS
+                ? `${secs}s — still waiting for the process to accept the debugger. It must hold the GIL briefly; a process stuck in a native call may take a while. Cancel to give up.`
+                : `${secs}s`,
+          });
+        }, 1000);
+        const done = () => {
+          clearInterval(timer);
+          settleByPid.delete(pid);
+          resolve();
+        };
+        settleByPid.set(pid, done);
+        token.onCancellationRequested(() => {
+          const s = activeByPid.get(pid);
+          if (s) {
+            void vscode.debug.stopDebugging(s);
+          }
+          done();
+        });
+        if (stateByPid.get(pid)?.phase !== "injecting") {
+          done();
+        }
+      });
+    },
+  );
+  const st = stateByPid.get(pid);
+  if (st?.phase === "failed") {
+    const choice = await vscode.window.showErrorMessage(`${name}: ${st.reason}. The Debug Console has debugpy's output.`, "Show Log");
+    if (choice) {
+      output.show(true);
+    }
+    stateByPid.delete(pid);
+    tree?.refresh();
   }
 }
 

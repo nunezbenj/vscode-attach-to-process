@@ -84,6 +84,9 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 
 ## Troubleshooting
 
+- *"Did it attach?"* — the row in the Attach panel (and the status bar) says *attached · N threads* once debugpy inside the process has connected; the Debug Console's "Attaching to PID… (elapsed …)" lines stop at that moment. Open **Run and Debug → Call Stack** to see the threads.
+- *"Pause does nothing"* — Pause only stops threads that are executing Python code. A thread blocked in a native call (`Thread.join`, a lock, a socket read without timeout, `subprocess.wait`) shows up as paused only when it returns to Python. A breakpoint on a line the program keeps hitting is the reliable way in; the Call Stack view still lists the threads either way.
+
 - *"gdb is not installed"* / *"ptrace_scope is 1"* — apply the commands from **Requirements**, then retry. The messages offer to copy the fix.
 - *"did not start"* — the Debug Console shows debugpy's own output. A process that exited between listing and attaching, or a Python interpreter not selected in the Python extension, are the usual causes.
 - The `frozen modules` warning debugpy prints is benign for your code.
