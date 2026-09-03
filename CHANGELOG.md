@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+- **Attach** panel in the activity bar (the plug icon on the left): lists your running Python
+  processes with an inline attach button, refreshes itself while visible, shows attached state,
+  and offers Copy Command Line / Copy PID on right-click
+
 ## 1.0.1
 
 - Plug icon in the editor title bar next to the Run/Debug button (Python files), an entry in

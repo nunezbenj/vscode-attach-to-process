@@ -18,6 +18,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 
 ## Features
 
+- **Attach panel** — a plug icon in the activity bar opens a view of your running Python processes; one click on a row attaches. It refreshes itself while visible and shows which processes are already attached.
 - **Process picker** — lists the current user's Python processes, newest first, with script (relative to its cwd), arguments, PID and age. Editor tooling (debugpy adapters, VS Code Server helpers, language servers) is hidden by default; toggle it with the eye button.
 - **No launch.json** — the attach configuration is built in memory for the session and never written to disk.
 - **Remote-native** — the extension runs on the remote host under Remote-SSH, so it sees the processes on the server you're connected to.
@@ -43,7 +44,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 
 | Action | How |
 | --- | --- |
-| Attach to a running process | The plug icon next to the Run/Debug button in the editor title bar (Python files), `Ctrl+Alt+A`, the **Attach** status-bar item, the plug on the debug toolbar, or Command Palette → *Attach: Attach to Running Python Process…* |
+| Attach to a running process | The **plug icon in the activity bar** (left), the plug icon next to the Run/Debug button in the editor title bar (Python files), `Ctrl+Alt+A`, the **Attach** status-bar item, the plug on the debug toolbar, or Command Palette → *Attach: Attach to Running Python Process…* |
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
 | Verify a server | *Attach: Check Server Readiness (gdb, ptrace)* |

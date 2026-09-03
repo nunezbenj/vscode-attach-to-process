@@ -9,9 +9,11 @@ import {
 } from "./processes";
 import { runPreflight, describePreflight, PreflightResult } from "./preflight";
 import { AttachSettings, AttachTarget, buildAttachConfig, parseHostPort, listenCommand } from "./config";
+import { ProcessTree, ProcessItem } from "./tree";
 
 let output: vscode.OutputChannel;
 let statusItem: vscode.StatusBarItem | undefined;
+let tree: ProcessTree | undefined;
 /** PIDs this extension host has injected into (debugpy cannot cleanly re-attach after a disconnect). */
 const injectedPids = new Set<number>();
 /** Active attach sessions keyed by PID. */
@@ -56,6 +58,28 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("attach.copyListenCommand", copyListenCommand),
     vscode.commands.registerCommand("attach.checkReadiness", checkReadiness),
     vscode.commands.registerCommand("attach.showLog", () => output.show(true)),
+    vscode.commands.registerCommand("attach.attachItem", async (item?: ProcessItem) => {
+      if (item?.proc) {
+        await attachToProcess(item.proc, runPreflight());
+      } else {
+        await pickAndAttach();
+      }
+    }),
+    vscode.commands.registerCommand("attach.refreshView", () => tree?.refresh()),
+    vscode.commands.registerCommand("attach.showHiddenInView", () => tree?.toggleHidden()),
+    vscode.commands.registerCommand("attach.hideHiddenInView", () => tree?.toggleHidden()),
+    vscode.commands.registerCommand("attach.copyCommandLine", async (item?: ProcessItem) => {
+      if (item?.proc) {
+        await vscode.env.clipboard.writeText(item.proc.cmdline.join(" "));
+        vscode.window.setStatusBarMessage("$(check) Command line copied", 3000);
+      }
+    }),
+    vscode.commands.registerCommand("attach.copyPid", async (item?: ProcessItem) => {
+      if (item?.proc) {
+        await vscode.env.clipboard.writeText(String(item.proc.pid));
+        vscode.window.setStatusBarMessage(`$(check) Copied pid ${item.proc.pid}`, 3000);
+      }
+    }),
     vscode.debug.onDidStartDebugSession((s) => {
       if (s.configuration.type === "debugpy" && s.configuration.request === "attach") {
         log(`session started: ${s.name}`);
@@ -64,6 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
           injectedPids.add(pid);
           activeByPid.set(pid, s);
         }
+        tree?.refresh();
       }
     }),
     vscode.debug.onDidTerminateDebugSession((s) => {
@@ -73,6 +98,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (typeof pid === "number" && activeByPid.get(pid) === s) {
           activeByPid.delete(pid);
         }
+        tree?.refresh();
       }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -81,6 +107,18 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
   );
+
+  tree = new ProcessTree({
+    log,
+    attach: (p) => attachToProcess(p, runPreflight()),
+    isActive: (pid) => activeByPid.has(pid),
+    wasInjected: (pid) => injectedPids.has(pid),
+    settings: () => {
+      const s = settings();
+      return { processFilter: s.processFilter, showHidden: s.showHidden, verbose: s.verbose };
+    },
+  });
+  context.subscriptions.push(tree);
 
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusItem.text = "$(plug) Attach";

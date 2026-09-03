@@ -2,7 +2,7 @@
   "name": "python-attach-to-process",
   "displayName": "Python: Attach to Running Process",
   "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "icon": "images/icon.png",
   "publisher": "nunezbenj",
   "repository": {
@@ -64,8 +64,61 @@
         "command": "attach.showLog",
         "title": "Show Log",
         "category": "Attach"
+      },
+      {
+        "command": "attach.attachItem",
+        "title": "Attach",
+        "category": "Attach",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "attach.refreshView",
+        "title": "Refresh",
+        "category": "Attach",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "attach.showHiddenInView",
+        "title": "Show Editor Tooling Processes",
+        "category": "Attach",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "attach.hideHiddenInView",
+        "title": "Hide Editor Tooling Processes",
+        "category": "Attach",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "attach.copyCommandLine",
+        "title": "Copy Command Line",
+        "category": "Attach"
+      },
+      {
+        "command": "attach.copyPid",
+        "title": "Copy PID",
+        "category": "Attach"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "attach",
+          "title": "Attach to Process",
+          "icon": "media/plug.svg"
+        }
+      ]
+    },
+    "views": {
+      "attach": [
+        {
+          "id": "attach.processes",
+          "name": "Running Python Processes",
+          "icon": "media/plug.svg",
+          "contextualTitle": "Attach to Process"
+        }
+      ]
+    },
     "menus": {
       "editor/title": [
         {
@@ -92,15 +145,92 @@
           "command": "attach.pickProcess",
           "when": "view == workbench.debug.callStack || view == workbench.debug.welcome",
           "group": "navigation@0"
+        },
+        {
+          "command": "attach.refreshView",
+          "when": "view == attach.processes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "attach.showHiddenInView",
+          "when": "view == attach.processes && !attach.showHidden",
+          "group": "navigation@2"
+        },
+        {
+          "command": "attach.hideHiddenInView",
+          "when": "view == attach.processes && attach.showHidden",
+          "group": "navigation@2"
+        },
+        {
+          "command": "attach.connect",
+          "when": "view == attach.processes",
+          "group": "more@1"
+        },
+        {
+          "command": "attach.copyListenCommand",
+          "when": "view == attach.processes",
+          "group": "more@2"
+        },
+        {
+          "command": "attach.checkReadiness",
+          "when": "view == attach.processes",
+          "group": "more@3"
+        },
+        {
+          "command": "attach.showLog",
+          "when": "view == attach.processes",
+          "group": "more@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "attach.attachItem",
+          "when": "view == attach.processes && viewItem == process",
+          "group": "inline@1"
+        },
+        {
+          "command": "attach.copyCommandLine",
+          "when": "view == attach.processes && viewItem =~ /^process/",
+          "group": "copy@1"
+        },
+        {
+          "command": "attach.copyPid",
+          "when": "view == attach.processes && viewItem =~ /^process/",
+          "group": "copy@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "attach.pickProcess"
+          "command": "attach.attachItem",
+          "when": "false"
+        },
+        {
+          "command": "attach.refreshView",
+          "when": "false"
+        },
+        {
+          "command": "attach.showHiddenInView",
+          "when": "false"
+        },
+        {
+          "command": "attach.hideHiddenInView",
+          "when": "false"
+        },
+        {
+          "command": "attach.copyCommandLine",
+          "when": "false"
+        },
+        {
+          "command": "attach.copyPid",
+          "when": "false"
         }
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "attach.processes",
+        "contents": "No running Python processes found for your user.\nStart your script from any terminal or SSH session on this host and it will show up here.\n[Refresh](command:attach.refreshView)\n[Connect to a listening debugpy…](command:attach.connect)"
+      },
       {
         "view": "debug",
         "contents": "Debug a script that is already running, no launch.json needed:\n[$(plug) Attach to Running Python Process](command:attach.pickProcess)\nSet your breakpoints, run the script from any terminal or SSH session, then pick it here."
