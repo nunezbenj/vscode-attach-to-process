@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Plug icon in the editor title bar next to the Run/Debug button (Python files), an entry in
+  that button's dropdown, and a button on the floating debug toolbar
+
 ## 1.0.0
 
 Initial release.

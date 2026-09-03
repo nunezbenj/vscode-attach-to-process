@@ -43,7 +43,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 
 | Action | How |
 | --- | --- |
-| Attach to a running process | `Ctrl+Alt+A`, the **Attach** status-bar item, the plug icon in the Run and Debug view, or Command Palette → *Attach: Attach to Running Python Process…* |
+| Attach to a running process | The plug icon next to the Run/Debug button in the editor title bar (Python files), `Ctrl+Alt+A`, the **Attach** status-bar item, the plug on the debug toolbar, or Command Palette → *Attach: Attach to Running Python Process…* |
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
 | Verify a server | *Attach: Check Server Readiness (gdb, ptrace)* |
