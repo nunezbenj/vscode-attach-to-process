@@ -10,6 +10,8 @@ export interface AttachSettings {
   extraConfig: Record<string, unknown>;
   /** VS Code's internalConsoleOptions: reveal the Debug Console when the session starts. */
   debugConsole: "openOnSessionStart" | "openOnFirstSessionStart" | "neverOpen";
+  /** Ask debugpy to write its own logs (Python Debugger extension's log folder). */
+  debugpyLogToFile?: boolean;
 }
 
 export interface PidTarget {
@@ -39,6 +41,9 @@ export function buildAttachConfig(target: AttachTarget, s: AttachSettings): Debu
   };
   if (s.subProcess) {
     base.subProcess = true;
+  }
+  if (s.debugpyLogToFile) {
+    base.logToFile = true;
   }
   if (s.pathMappings.length > 0) {
     base.pathMappings = s.pathMappings;

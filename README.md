@@ -50,7 +50,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
 | Verify a server | *Attach: Check Server Readiness (gdb, ptrace)* |
-| Troubleshoot | *Attach: Show Log* |
+| Troubleshoot | *Attach: Show Log*; for bugs, *Attach: Report a Bug…* copies environment + settings + recent log and opens a prefilled GitHub issue |
 
 Try it with the bundled sample: run `python3 test-python/sleeper.py --tag demo` in a terminal, put a breakpoint on the `total += n` line, press `Ctrl+Alt+A` and pick `sleeper.py --tag demo`.
 
@@ -77,7 +77,8 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 | `attach.extraConfig` | `{}` | Extra keys merged into the generated configuration |
 | `attach.debugConsole` | `openOnSessionStart` | Reveal the Debug Console when an attach starts (`neverOpen` to leave the panel alone) |
 | `attach.showStatusBarItem` | `true` | Show the status-bar button |
-| `attach.verboseLogging` | `false` | Log every process considered and why it was hidden |
+| `attach.debugpyLogToFile` | `false` | Have debugpy write its own logs (adapter, injector, in-process server) |
+| `attach.verboseLogging` | `false` | Log every process considered, why it was hidden, and the full debug-adapter traffic |
 
 ## Limitations
 
@@ -93,6 +94,7 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 - *"gdb is not installed"* / *"ptrace_scope is 1"* — apply the commands from **Requirements**, then retry. The messages offer to copy the fix.
 - *"did not start"* — the Debug Console shows debugpy's own output. A process that exited between listing and attaching, or a Python interpreter not selected in the Python extension, are the usual causes.
 - The `frozen modules` warning debugpy prints is benign for your code.
+- **Filing a bug**: turn on `attach.verboseLogging` (and `attach.debugpyLogToFile` for injection problems), reproduce, then run *Attach: Report a Bug…* — it copies the environment, settings and recent log to your clipboard and opens a prefilled issue. Skim the bundle for hostnames or paths you'd rather not share before posting.
 
 ## Development
 

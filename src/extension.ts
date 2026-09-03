@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import * as os from "os";
+import { execFile } from "child_process";
 import {
   PythonProcess,
   listPythonProcesses,
@@ -7,7 +9,7 @@ import {
   formatAge,
   isSupportedPlatform,
 } from "./processes";
-import { runPreflight, describePreflight, PreflightResult } from "./preflight";
+import { runPreflight, describePreflight, PreflightResult, findOnPath } from "./preflight";
 import { AttachSettings, AttachTarget, buildAttachConfig, parseHostPort, listenCommand } from "./config";
 import { ProcessTree, ProcessItem } from "./tree";
 
@@ -24,9 +26,116 @@ const stateByPid = new Map<number, AttachState>();
 const settleByPid = new Map<number, () => void>();
 const INJECT_HINT_MS = 15000;
 
+const LOG_KEEP = 400;
+const recentLog: string[] = [];
+let extensionVersion = "?";
+let envSummary = "";
+
 function log(msg: string): void {
   const ts = new Date().toISOString().slice(11, 23);
-  output.appendLine(`[${ts}] ${msg}`);
+  const line = `[${ts}] ${msg}`;
+  output.appendLine(line);
+  recentLog.push(line);
+  if (recentLog.length > LOG_KEEP) {
+    recentLog.splice(0, recentLog.length - LOG_KEEP);
+  }
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+/** Register a command whose failures land in the log instead of vanishing. */
+function reg(context: vscode.ExtensionContext, id: string, fn: (...args: unknown[]) => unknown): void {
+  context.subscriptions.push(
+    vscode.commands.registerCommand(id, async (...args: unknown[]) => {
+      try {
+        return await fn(...args);
+      } catch (e) {
+        const err = e as Error;
+        log(`command ${id} failed: ${err.stack ?? err.message ?? String(e)}`);
+        const choice = await vscode.window.showErrorMessage(`Attach: ${id} failed — ${err.message ?? e}`, "Show Log", "Report a Bug…");
+        if (choice === "Show Log") {
+          output.show(true);
+        } else if (choice === "Report a Bug…") {
+          await reportIssue();
+        }
+        return undefined;
+      }
+    }),
+  );
+}
+
+function execFirstLine(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 3000 }, (err, stdout) => resolve(err ? `(${err.message.split("\n")[0]})` : stdout.split("\n")[0].trim()));
+  });
+}
+
+async function pythonInterpreter(): Promise<string> {
+  try {
+    const py = vscode.extensions.getExtension("ms-python.python");
+    if (!py) {
+      return "(ms-python.python not installed)";
+    }
+    const api = (await py.activate()) as { environments?: { getActiveEnvironmentPath?: () => { path?: string } } };
+    return api.environments?.getActiveEnvironmentPath?.()?.path ?? "(unknown)";
+  } catch (e) {
+    return `(error: ${(e as Error).message})`;
+  }
+}
+
+async function collectEnvironment(): Promise<string> {
+  const ext = (id: string) => vscode.extensions.getExtension(id)?.packageJSON?.version ?? "not installed";
+  const lines = [
+    `extension: python-attach-to-process ${extensionVersion}`,
+    `vscode: ${vscode.version} (${vscode.env.appName}, host ${vscode.env.appHost}, remote ${vscode.env.remoteName ?? "none"})`,
+    `platform: ${process.platform} ${os.release()} ${process.arch}, node ${process.version}, uid ${typeof process.getuid === "function" ? process.getuid() : "n/a"}`,
+    `ms-python.python: ${ext("ms-python.python")}, ms-python.debugpy: ${ext("ms-python.debugpy")}`,
+    `python interpreter: ${await pythonInterpreter()}`,
+  ];
+  if (process.platform === "linux") {
+    lines.push(`gdb: ${findOnPath("gdb") ? await execFirstLine("gdb", ["--version"]) : "not on PATH"}`);
+  }
+  lines.push(describePreflight(runPreflight()));
+  return lines.join("\n");
+}
+
+function settingsSummary(): string {
+  const c = vscode.workspace.getConfiguration("attach");
+  const keys = ["justMyCode", "processFilter", "showHiddenProcesses", "defaultHost", "defaultPort", "pathMappings", "subProcess", "extraConfig", "debugConsole", "debugpyLogToFile", "verboseLogging"];
+  return keys.map((k) => `  ${k}: ${JSON.stringify(c.get(k))}`).join("\n");
+}
+
+async function reportIssue(): Promise<void> {
+  const env = await collectEnvironment();
+  const bundle = [
+    "### What happened",
+    "",
+    "<!-- what you did, what you expected, what you saw -->",
+    "",
+    "### Environment",
+    "```",
+    env,
+    "```",
+    "### Settings",
+    "```",
+    settingsSummary(),
+    "```",
+    "### Log (Attach: Show Log — last lines)",
+    "```",
+    ...recentLog.slice(-120),
+    "```",
+  ].join("\n");
+  await vscode.env.clipboard.writeText(bundle);
+  const url = `https://github.com/nunezbenj/vscode-attach-to-process/issues/new?body=${encodeURIComponent(truncate(bundle, 6000))}`;
+  const choice = await vscode.window.showInformationMessage(
+    "Bug report bundle (environment, settings, recent log) copied to the clipboard. Paste it into the issue if the browser form arrives truncated. Check it for anything you'd rather not share.",
+    "Open GitHub issue",
+  );
+  if (choice) {
+    await vscode.env.openExternal(vscode.Uri.parse(url));
+  }
 }
 
 function settings(): AttachSettings & {
@@ -44,6 +153,7 @@ function settings(): AttachSettings & {
     pathMappings: c.get<Array<{ localRoot: string; remoteRoot: string }>>("pathMappings", []),
     extraConfig: c.get<Record<string, unknown>>("extraConfig", {}),
     debugConsole: c.get<"openOnSessionStart" | "openOnFirstSessionStart" | "neverOpen">("debugConsole", "openOnSessionStart"),
+    debugpyLogToFile: c.get<boolean>("debugpyLogToFile", false),
     processFilter: c.get<string>("processFilter", ""),
     showHidden: c.get<boolean>("showHiddenProcesses", false),
     defaultHost: c.get<string>("defaultHost", "localhost"),
@@ -56,22 +166,29 @@ function settings(): AttachSettings & {
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Attach to Process");
   context.subscriptions.push(output);
-  log(`activated on ${process.platform} (extension host pid ${process.pid})`);
+  extensionVersion = String(context.extension.packageJSON?.version ?? "?");
+  log(`activated: python-attach-to-process ${extensionVersion} on ${process.platform} (extension host pid ${process.pid})`);
+  void collectEnvironment().then((env) => {
+    envSummary = env;
+    log(env);
+  });
 
+  reg(context, "attach.pickProcess", pickAndAttach);
+  reg(context, "attach.connect", connectToListening);
+  reg(context, "attach.copyListenCommand", copyListenCommand);
+  reg(context, "attach.checkReadiness", checkReadiness);
+  reg(context, "attach.showLog", () => output.show(true));
+  reg(context, "attach.reportIssue", reportIssue);
+  reg(context, "attach.attachItem", async (item?: unknown) => {
+    const it = item as ProcessItem | undefined;
+    if (it?.proc) {
+      await attachToProcess(it.proc, runPreflight());
+    } else {
+      await pickAndAttach();
+    }
+  });
+  reg(context, "attach.refreshView", () => tree?.refresh());
   context.subscriptions.push(
-    vscode.commands.registerCommand("attach.pickProcess", pickAndAttach),
-    vscode.commands.registerCommand("attach.connect", connectToListening),
-    vscode.commands.registerCommand("attach.copyListenCommand", copyListenCommand),
-    vscode.commands.registerCommand("attach.checkReadiness", checkReadiness),
-    vscode.commands.registerCommand("attach.showLog", () => output.show(true)),
-    vscode.commands.registerCommand("attach.attachItem", async (item?: ProcessItem) => {
-      if (item?.proc) {
-        await attachToProcess(item.proc, runPreflight());
-      } else {
-        await pickAndAttach();
-      }
-    }),
-    vscode.commands.registerCommand("attach.refreshView", () => tree?.refresh()),
     vscode.commands.registerCommand("attach.stopProcess", async (item?: ProcessItem) => {
       if (item?.proc) {
         await stopProcess(item.proc.pid, path.basename(displayTarget(item.proc.parsed, item.proc.cwd)));
@@ -145,8 +262,20 @@ export function activate(context: vscode.ExtensionContext): void {
         if (session.configuration.request !== "attach" || typeof pid !== "number") {
           return undefined;
         }
+        const verbose = settings().verbose;
         return {
+          onWillReceiveMessage: (m: unknown) => {
+            if (verbose) {
+              log(`pid ${pid} DAP -> ${truncate(JSON.stringify(m), 1500)}`);
+            }
+          },
+          onWillStartSession: () => log(`pid ${pid}: adapter session starting`),
+          onWillStopSession: () => log(`pid ${pid}: adapter session stopping`),
+          onExit: (code: number | undefined, signal: string | undefined) => log(`pid ${pid}: adapter exited (code ${code}, signal ${signal})`),
           onDidSendMessage: (m: { type: string; command?: string; success?: boolean; message?: string; event?: string; body?: { category?: string; output?: string } }) => {
+            if (verbose) {
+              log(`pid ${pid} DAP <- ${truncate(JSON.stringify(m), 1500)}`);
+            }
             if (m.type === "response" && m.command === "attach") {
               if (m.success) {
                 onAttached(session, pid);
@@ -156,8 +285,10 @@ export function activate(context: vscode.ExtensionContext): void {
                 settleByPid.get(pid)?.();
                 tree?.refresh();
               }
-            } else if (m.type === "event" && m.event === "output" && m.body?.output && settings().verbose) {
-              log(`pid ${pid} [${m.body.category}] ${m.body.output.trimEnd()}`);
+            } else if (m.type === "event" && m.event === "output" && m.body?.output && !verbose) {
+              log(`pid ${pid} [${m.body.category}] ${truncate(m.body.output.trimEnd(), 300)}`);
+            } else if (m.type === "response" && m.success === false && !verbose) {
+              log(`pid ${pid}: ${m.command} failed: ${m.message}`);
             }
           },
           onError: (e: Error) => log(`pid ${pid}: adapter error: ${e.message}`),
@@ -214,10 +345,6 @@ interface ProcItem extends vscode.QuickPickItem {
 const REFRESH_BTN: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("refresh"), tooltip: "Refresh process list" };
 const SHOW_HIDDEN_BTN: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("eye"), tooltip: "Show editor tooling processes too" };
 const HIDE_HIDDEN_BTN: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("eye-closed"), tooltip: "Hide editor tooling processes" };
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}
 
 function makeItem(p: PythonProcess): ProcItem {
   const target = displayTarget(p.parsed, p.cwd);

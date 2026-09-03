@@ -2,9 +2,13 @@
   "name": "python-attach-to-process",
   "displayName": "Python: Attach to Running Process",
   "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "icon": "images/icon.png",
   "publisher": "nunezbenj",
+  "bugs": {
+    "url": "https://github.com/nunezbenj/vscode-attach-to-process/issues"
+  },
+  "homepage": "https://github.com/nunezbenj/vscode-attach-to-process#readme",
   "repository": {
     "type": "git",
     "url": "https://github.com/nunezbenj/vscode-attach-to-process.git"
@@ -63,6 +67,11 @@
       {
         "command": "attach.showLog",
         "title": "Show Log",
+        "category": "Attach"
+      },
+      {
+        "command": "attach.reportIssue",
+        "title": "Report a Bug (copies environment + log)...",
         "category": "Attach"
       },
       {
@@ -191,6 +200,11 @@
           "command": "attach.showLog",
           "when": "view == attach.processes",
           "group": "more@4"
+        },
+        {
+          "command": "attach.reportIssue",
+          "when": "view == attach.processes",
+          "group": "more@5"
         }
       ],
       "view/item/context": [
@@ -324,6 +338,11 @@
           "default": "openOnSessionStart",
           "description": "Reveal the Debug Console panel when an attach session starts (even if the Terminal tab was active)."
         },
+        "attach.debugpyLogToFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pass logToFile to debugpy so the adapter, launcher and injected server write their own logs (see the Python Debugger extension's log folder; Output → Python Debugger shows the path)."
+        },
         "attach.showStatusBarItem": {
           "type": "boolean",
           "default": true,
@@ -332,7 +351,7 @@
         "attach.verboseLogging": {
           "type": "boolean",
           "default": false,
-          "description": "Log every process considered by the picker (and why it was hidden) to the Output channel."
+          "description": "Log every process considered by the picker (and why it was hidden) and the full debug-adapter traffic of attach sessions to the Output channel. Turn on before reproducing a bug."
         }
       }
     }

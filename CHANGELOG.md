@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1
+
+- **Report a Bug…** command: copies environment (versions, interpreter, remote, gdb/ptrace),
+  settings and the recent log to the clipboard and opens a prefilled GitHub issue
+- Environment summary logged at activation; verbose mode now records the full debug-adapter
+  traffic of attach sessions; command failures are logged instead of disappearing
+- `attach.debugpyLogToFile` to get debugpy's own logs
+
 ## 1.2.0
 
 - **Stop Process**: red stop button on the debug toolbar (for attach sessions) and on every row of
