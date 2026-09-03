@@ -43,6 +43,7 @@ function settings(): AttachSettings & {
     subProcess: c.get<boolean>("subProcess", false),
     pathMappings: c.get<Array<{ localRoot: string; remoteRoot: string }>>("pathMappings", []),
     extraConfig: c.get<Record<string, unknown>>("extraConfig", {}),
+    debugConsole: c.get<"openOnSessionStart" | "openOnFirstSessionStart" | "neverOpen">("debugConsole", "openOnSessionStart"),
     processFilter: c.get<string>("processFilter", ""),
     showHidden: c.get<boolean>("showHiddenProcesses", false),
     defaultHost: c.get<string>("defaultHost", "localhost"),

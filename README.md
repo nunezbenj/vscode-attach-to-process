@@ -73,6 +73,7 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 | `attach.pathMappings` | `[]` | debugpy `pathMappings` for every attach (not needed under Remote-SSH) |
 | `attach.subProcess` | `false` | Debug child processes spawned after attaching |
 | `attach.extraConfig` | `{}` | Extra keys merged into the generated configuration |
+| `attach.debugConsole` | `openOnSessionStart` | Reveal the Debug Console when an attach starts (`neverOpen` to leave the panel alone) |
 | `attach.showStatusBarItem` | `true` | Show the status-bar button |
 | `attach.verboseLogging` | `false` | Log every process considered and why it was hidden |
 

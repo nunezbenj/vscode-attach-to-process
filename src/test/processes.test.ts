@@ -126,14 +126,14 @@ describe("displayTarget / formatAge / stat", () => {
 });
 
 describe("buildAttachConfig", () => {
-  const s = { justMyCode: false, subProcess: true, pathMappings: [], extraConfig: { logToFile: true } };
+  const s = { justMyCode: false, subProcess: true, pathMappings: [], extraConfig: { logToFile: true }, debugConsole: "openOnSessionStart" as const };
   it("pid target", () => {
     const c = buildAttachConfig({ kind: "pid", pid: 77, label: "run.py" }, s);
-    assert.deepStrictEqual(c, { type: "debugpy", request: "attach", name: "Attach: run.py (pid 77)", justMyCode: false, subProcess: true, processId: 77, logToFile: true });
+    assert.deepStrictEqual(c, { type: "debugpy", request: "attach", name: "Attach: run.py (pid 77)", justMyCode: false, internalConsoleOptions: "openOnSessionStart", subProcess: true, processId: 77, logToFile: true });
   });
   it("connect target", () => {
     const c = buildAttachConfig({ kind: "connect", host: "localhost", port: 5678, label: "x" }, { ...s, subProcess: false, extraConfig: {}, pathMappings: [{ localRoot: "/a", remoteRoot: "/b" }] });
-    assert.deepStrictEqual(c, { type: "debugpy", request: "attach", name: "Attach: localhost:5678", justMyCode: false, pathMappings: [{ localRoot: "/a", remoteRoot: "/b" }], connect: { host: "localhost", port: 5678 } });
+    assert.deepStrictEqual(c, { type: "debugpy", request: "attach", name: "Attach: localhost:5678", justMyCode: false, internalConsoleOptions: "openOnSessionStart", pathMappings: [{ localRoot: "/a", remoteRoot: "/b" }], connect: { host: "localhost", port: 5678 } });
   });
   it("extraConfig cannot change type/request", () => {
     const c = buildAttachConfig({ kind: "pid", pid: 1, label: "x" }, { ...s, extraConfig: { type: "node", request: "launch" } });

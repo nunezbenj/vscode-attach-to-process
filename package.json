@@ -2,7 +2,7 @@
   "name": "python-attach-to-process",
   "displayName": "Python: Attach to Running Process",
   "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "icon": "images/icon.png",
   "publisher": "nunezbenj",
   "repository": {
@@ -292,6 +292,12 @@
           "type": "object",
           "default": {},
           "description": "Extra keys merged into the generated debug configuration (escape hatch, e.g. {\"logToFile\": true})."
+        },
+        "attach.debugConsole": {
+          "type": "string",
+          "enum": ["openOnSessionStart", "openOnFirstSessionStart", "neverOpen"],
+          "default": "openOnSessionStart",
+          "description": "Reveal the Debug Console panel when an attach session starts (even if the Terminal tab was active)."
         },
         "attach.showStatusBarItem": {
           "type": "boolean",

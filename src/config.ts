@@ -8,6 +8,8 @@ export interface AttachSettings {
   subProcess: boolean;
   pathMappings: Array<{ localRoot: string; remoteRoot: string }>;
   extraConfig: Record<string, unknown>;
+  /** VS Code's internalConsoleOptions: reveal the Debug Console when the session starts. */
+  debugConsole: "openOnSessionStart" | "openOnFirstSessionStart" | "neverOpen";
 }
 
 export interface PidTarget {
@@ -33,6 +35,7 @@ export function buildAttachConfig(target: AttachTarget, s: AttachSettings): Debu
     request: "attach",
     name: target.kind === "pid" ? `Attach: ${target.label} (pid ${target.pid})` : `Attach: ${target.host}:${target.port}`,
     justMyCode: s.justMyCode,
+    internalConsoleOptions: s.debugConsole,
   };
   if (s.subProcess) {
     base.subProcess = true;

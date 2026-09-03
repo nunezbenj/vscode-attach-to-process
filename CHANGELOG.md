@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+- Reveal the Debug Console when an attach session starts (`attach.debugConsole`, default
+  `openOnSessionStart`), so you're not left looking at the Terminal tab
+
 ## 1.1.1
 
 - Report the real attach outcome: rows show *injecting debugpy…* until debugpy inside the
