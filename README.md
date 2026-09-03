@@ -10,6 +10,8 @@ Attach the VS Code Python debugger to a **script that is already running** — f
 
 Same effect as adding an attach entry to `.vscode/launch.json` and launching from the IDE, minus the ceremony.
 
+![The Attach panel in the activity bar, with its menu open](images/attach-panel.png)
+
 ## Why
 
 VS Code can already attach to a running Python process (debugpy injects itself by PID), but the workflow buries it: edit `launch.json`, pick from a raw process list, hope you grabbed the right one. Most people never find out it exists. This extension turns it into one keystroke and a list of *your* Python processes, showing the script, its arguments, working directory and how long it has been running.
