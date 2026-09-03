@@ -29,7 +29,7 @@ export class ProcessItem extends vscode.TreeItem {
     if (active && state?.phase === "injecting") {
       bits.push("injecting debugpy…");
     } else if (active && state?.phase === "attached") {
-      bits.push(state.threads !== undefined ? `attached · ${state.threads} threads` : "attached");
+      bits.push(state.threads !== undefined ? `attached · ${state.threads} ${state.threads === 1 ? "thread" : "threads"}` : "attached");
     } else if (state?.phase === "failed") {
       bits.push(`attach failed: ${state.reason}`);
     } else if (injectedBefore) {

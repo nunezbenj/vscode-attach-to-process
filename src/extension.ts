@@ -630,7 +630,7 @@ async function onAttached(session: vscode.DebugSession, pid: number): Promise<vo
     const n = r.threads?.length;
     stateByPid.set(pid, { phase: "attached", threads: n });
     log(`pid ${pid}: attached, ${n ?? "?"} thread(s) visible`);
-    vscode.window.setStatusBarMessage(`$(check) Attached to pid ${pid} — ${n ?? "?"} thread(s). Pause stops threads running Python; blocked threads stop at their next Python line.`, 8000);
+    vscode.window.setStatusBarMessage(`$(check) Attached to pid ${pid} — ${n ?? "?"} ${n === 1 ? "thread" : "threads"}. Pause stops threads running Python; blocked threads stop at their next Python line.`, 8000);
   } catch (e) {
     log(`pid ${pid}: attached (threads request failed: ${e})`);
   }

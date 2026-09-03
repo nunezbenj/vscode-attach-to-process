@@ -10,7 +10,7 @@ Attach the VS Code Python debugger to a **script that is already running** — f
 
 Same effect as adding an attach entry to `.vscode/launch.json` and launching from the IDE, minus the ceremony.
 
-![The Attach panel in the activity bar, with its menu open](images/attach-panel.png)
+![Attached to a script started from a terminal: the Attach panel row shows the process, the breakpoint is hit, the Debug Console shows the injection](images/attach-demo.png)
 
 ## Why
 

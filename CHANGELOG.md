@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3
+
+- "1 threads" → "1 thread"; README screenshot of a real attach
+
 ## 1.2.2
 
 - Logs are written to a file per session and survive window reloads (last 10 sessions kept);
