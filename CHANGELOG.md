@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+- Logs are written to a file per session and survive window reloads (last 10 sessions kept);
+  **Attach: Open Previous Session Logs** picks one from a crashed session
+- *Report a Bug* renamed **Copy Diagnostic Report**; the report includes the log location and
+  offers to open the log folder
+
 ## 1.2.1
 
 - **Report a Bug…** command: copies environment (versions, interpreter, remote, gdb/ptrace),

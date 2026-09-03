@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as os from "os";
+import * as fs from "fs";
 import { execFile } from "child_process";
 import {
   PythonProcess,
@@ -27,9 +28,11 @@ const settleByPid = new Map<number, () => void>();
 const INJECT_HINT_MS = 15000;
 
 const LOG_KEEP = 400;
+const LOG_FILES_KEEP = 10;
 const recentLog: string[] = [];
 let extensionVersion = "?";
-let envSummary = "";
+let logDir = "";
+let logFile = "";
 
 function log(msg: string): void {
   const ts = new Date().toISOString().slice(11, 23);
@@ -38,6 +41,65 @@ function log(msg: string): void {
   recentLog.push(line);
   if (recentLog.length > LOG_KEEP) {
     recentLog.splice(0, recentLog.length - LOG_KEEP);
+  }
+  if (logFile) {
+    try {
+      fs.appendFileSync(logFile, line + "\n");
+    } catch {
+      /* disk trouble must never break the extension */
+    }
+  }
+}
+
+/** One log file per extension-host session, kept across window reloads; oldest pruned. */
+function initLogFile(context: vscode.ExtensionContext): void {
+  try {
+    logDir = context.logUri.fsPath;
+    fs.mkdirSync(logDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    logFile = path.join(logDir, `attach-${stamp}-${process.pid}.log`);
+    fs.writeFileSync(logFile, `# python-attach-to-process ${extensionVersion} session log — ${new Date().toString()}\n`);
+    for (const old of listLogFiles().slice(LOG_FILES_KEEP)) {
+      try {
+        fs.unlinkSync(path.join(logDir, old));
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (e) {
+    logFile = "";
+    output.appendLine(`(could not create a log file: ${e})`);
+  }
+}
+
+/** Log file names, newest first. */
+function listLogFiles(): string[] {
+  try {
+    return fs
+      .readdirSync(logDir)
+      .filter((f) => /^attach-.*\.log$/.test(f))
+      .map((f) => ({ f, t: fs.statSync(path.join(logDir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)
+      .map((x) => x.f);
+  } catch {
+    return [];
+  }
+}
+
+async function openPreviousLogs(): Promise<void> {
+  const files = listLogFiles().filter((f) => path.join(logDir, f) !== logFile);
+  if (files.length === 0) {
+    vscode.window.showInformationMessage(`No previous session logs yet (logs are kept in ${logDir || "the extension log folder"}).`);
+    return;
+  }
+  const items = files.map((f) => {
+    const full = path.join(logDir, f);
+    const st = fs.statSync(full);
+    return { label: f, description: `${st.mtime.toLocaleString()} · ${(st.size / 1024).toFixed(1)} KB`, full };
+  });
+  const pick = await vscode.window.showQuickPick(items, { title: "Attach: previous session logs (newest first)", placeHolder: "Pick the session that had the problem" });
+  if (pick) {
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(pick.full)), { preview: false });
   }
 }
 
@@ -122,7 +184,9 @@ async function reportIssue(): Promise<void> {
     "```",
     settingsSummary(),
     "```",
-    "### Log (Attach: Show Log — last lines)",
+    `Log files: \`${logDir || "(unavailable)"}\` — current session: \`${path.basename(logFile) || "none"}\` (Attach: Open Previous Session Logs for earlier ones)`,
+    "",
+    "### Log (last lines of this session)",
     "```",
     ...recentLog.slice(-120),
     "```",
@@ -130,9 +194,14 @@ async function reportIssue(): Promise<void> {
   await vscode.env.clipboard.writeText(bundle);
   const url = `https://github.com/nunezbenj/vscode-attach-to-process/issues/new?body=${encodeURIComponent(truncate(bundle, 6000))}`;
   const choice = await vscode.window.showInformationMessage(
-    "Bug report bundle (environment, settings, recent log) copied to the clipboard. Paste it into the issue if the browser form arrives truncated. Check it for anything you'd rather not share.",
+    "Diagnostic report (environment, settings, log location, recent log) copied to the clipboard. Review it for hostnames or paths you'd rather not share, then paste it into the issue.",
     "Open GitHub issue",
+    "Open log folder",
   );
+  if (choice === "Open log folder" && logDir) {
+    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(logFile || logDir));
+    return;
+  }
   if (choice) {
     await vscode.env.openExternal(vscode.Uri.parse(url));
   }
@@ -167,11 +236,10 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Attach to Process");
   context.subscriptions.push(output);
   extensionVersion = String(context.extension.packageJSON?.version ?? "?");
+  initLogFile(context);
   log(`activated: python-attach-to-process ${extensionVersion} on ${process.platform} (extension host pid ${process.pid})`);
-  void collectEnvironment().then((env) => {
-    envSummary = env;
-    log(env);
-  });
+  log(`log file: ${logFile || "(none)"}`);
+  void collectEnvironment().then((env) => log(env));
 
   reg(context, "attach.pickProcess", pickAndAttach);
   reg(context, "attach.connect", connectToListening);
@@ -179,6 +247,7 @@ export function activate(context: vscode.ExtensionContext): void {
   reg(context, "attach.checkReadiness", checkReadiness);
   reg(context, "attach.showLog", () => output.show(true));
   reg(context, "attach.reportIssue", reportIssue);
+  reg(context, "attach.openPreviousLogs", openPreviousLogs);
   reg(context, "attach.attachItem", async (item?: unknown) => {
     const it = item as ProcessItem | undefined;
     if (it?.proc) {

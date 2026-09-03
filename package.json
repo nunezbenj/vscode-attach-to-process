@@ -2,7 +2,7 @@
   "name": "python-attach-to-process",
   "displayName": "Python: Attach to Running Process",
   "description": "Attach the Python debugger to an already-running process from a picker. No launch.json: set breakpoints, run your script anywhere (terminal, SSH), pick it, debug.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "icon": "images/icon.png",
   "publisher": "nunezbenj",
   "bugs": {
@@ -71,7 +71,12 @@
       },
       {
         "command": "attach.reportIssue",
-        "title": "Report a Bug (copies environment + log)...",
+        "title": "Copy Diagnostic Report",
+        "category": "Attach"
+      },
+      {
+        "command": "attach.openPreviousLogs",
+        "title": "Open Previous Session Logs",
         "category": "Attach"
       },
       {
@@ -205,6 +210,11 @@
           "command": "attach.reportIssue",
           "when": "view == attach.processes",
           "group": "more@5"
+        },
+        {
+          "command": "attach.openPreviousLogs",
+          "when": "view == attach.processes",
+          "group": "more@6"
         }
       ],
       "view/item/context": [

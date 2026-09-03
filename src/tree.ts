@@ -144,7 +144,13 @@ export class ProcessTree implements vscode.TreeDataProvider<ProcessItem>, vscode
     if (element) {
       return [];
     }
-    const procs = await this.list();
+    let procs: PythonProcess[];
+    try {
+      procs = await this.list();
+    } catch (e) {
+      this.deps.log(`process list failed: ${(e as Error).stack ?? e}`);
+      return [];
+    }
     this.lastKey = procs.map((p) => `${p.pid}:${this.deps.isActive(p.pid)}`).join(",");
     return procs.map((p) => new ProcessItem(p, this.deps.isActive(p.pid), this.deps.wasInjected(p.pid), this.deps.state(p.pid)));
   }

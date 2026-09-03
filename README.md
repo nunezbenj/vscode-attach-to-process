@@ -50,7 +50,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
 | Verify a server | *Attach: Check Server Readiness (gdb, ptrace)* |
-| Troubleshoot | *Attach: Show Log*; for bugs, *Attach: Report a Bug…* copies environment + settings + recent log and opens a prefilled GitHub issue |
+| Troubleshoot | *Attach: Show Log*, *Attach: Copy Diagnostic Report*, *Attach: Open Previous Session Logs* |
 
 Try it with the bundled sample: run `python3 test-python/sleeper.py --tag demo` in a terminal, put a breakpoint on the `total += n` line, press `Ctrl+Alt+A` and pick `sleeper.py --tag demo`.
 
@@ -86,23 +86,28 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 - **One injection per process.** After you disconnect from a process attached by PID, debugpy cannot cleanly attach to it again (a second injection reports success but breakpoints never hit). Restart the script, or use the `--listen` path, which supports reconnecting. The picker warns you about this.
 - Processes belonging to other users are never listed (and could not be attached to anyway).
 
-## Troubleshooting
+## Troubleshooting & Reporting Bugs
+
+> — *"Hey, the extension crashed."*
+> — *"Run **Attach: Copy Diagnostic Report** and paste it into an issue — no need to reproduce."*
+> — *"But I already reloaded the window…"*
+> — *"Doesn't matter — **Attach: Open Previous Session Logs**, grab the file from the crashed session."*
+
+That's the whole workflow. The extension always logs its activity to a file — you do **not** need to reproduce a problem to report it.
+
+- **Right after something goes wrong:** run **Attach: Copy Diagnostic Report** from the Command Palette (or the `…` menu of the Attach panel). It copies your environment (versions, interpreter, remote, gdb/ptrace), settings, log location and the recent log in one step, and offers to open a prefilled issue. ⚠️ Review it first: it includes hostnames and the command lines of your processes.
+- **After a crash or window reload:** logs persist on disk across sessions (last 10 kept). Run **Attach: Open Previous Session Logs** and pick the file from the crashed session to attach.
+- **For deeper traces on a reproducible issue:** enable `attach.verboseLogging` (logs every process considered and the full debug-adapter traffic), reproduce once, then copy the report. For injection failures inside the process, add `attach.debugpyLogToFile` to get debugpy's own logs.
+
+Issues and feature requests: [github.com/nunezbenj/vscode-attach-to-process/issues](https://github.com/nunezbenj/vscode-attach-to-process/issues). Please say whether the process runs locally or on a Remote-SSH host.
+
+### Common questions
 
 - *"Did it attach?"* — the row in the Attach panel (and the status bar) says *attached · N threads* once debugpy inside the process has connected; the Debug Console's "Attaching to PID… (elapsed …)" lines stop at that moment. Open **Run and Debug → Call Stack** to see the threads.
 - *"Pause does nothing"* — Pause only stops threads that are executing Python code. A thread blocked in a native call (`Thread.join`, a lock, a socket read without timeout, `subprocess.wait`) shows up as paused only when it returns to Python. A breakpoint on a line the program keeps hitting is the reliable way in; the Call Stack view still lists the threads either way.
-
 - *"gdb is not installed"* / *"ptrace_scope is 1"* — apply the commands from **Requirements**, then retry. The messages offer to copy the fix.
-- *"did not start"* — the Debug Console shows debugpy's own output. A process that exited between listing and attaching, or a Python interpreter not selected in the Python extension, are the usual causes.
+- *"did not start"* — the Debug Console shows debugpy's own output. A process that exited between listing and attaching, or no Python interpreter selected in the Python extension, are the usual causes.
 - The `frozen modules` warning debugpy prints is benign for your code.
-- **Filing a bug**: turn on `attach.verboseLogging` (and `attach.debugpyLogToFile` for injection problems), reproduce, then run *Attach: Report a Bug…* — it copies the environment, settings and recent log to your clipboard and opens a prefilled issue. Skim the bundle for hostnames or paths you'd rather not share before posting.
-
-## Bugs and feature requests
-
-Please file them at [github.com/nunezbenj/vscode-attach-to-process/issues](https://github.com/nunezbenj/vscode-attach-to-process/issues).
-
-For a bug, run **Attach: Report a Bug…** from the Command Palette (or the `…` menu of the Attach panel) first: it copies the environment, your `attach.*` settings and the recent log to the clipboard and opens a prefilled issue. Turning on `attach.verboseLogging` before reproducing makes the log a lot more useful. Include which host the process runs on (local vs Remote-SSH) and the command line of the process you tried to attach to.
-
-Feature requests are welcome too — a sentence on the workflow you're trying to make faster is enough.
 
 ## Development
 
