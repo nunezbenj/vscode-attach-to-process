@@ -324,7 +324,11 @@ export function activate(context: vscode.ExtensionContext): void {
         if (typeof pid === "number") {
           injectedPids.add(pid);
           activeByPid.set(pid, s);
-          stateByPid.set(pid, { phase: "injecting", since: Date.now() });
+          // VS Code 1.138+ fires this only after the adapter answered "attach", i.e. after the
+          // tracker may already have recorded the outcome — never overwrite that.
+          if (!stateByPid.has(pid) || stateByPid.get(pid)?.phase === "failed") {
+            stateByPid.set(pid, { phase: "injecting", since: Date.now() });
+          }
         }
         tree?.refresh();
       }
@@ -999,6 +1003,7 @@ async function trackInjection(pid: number, name: string): Promise<void> {
         const timer = setInterval(() => {
           const st = stateByPid.get(pid);
           if (!st || st.phase !== "injecting") {
+            done(); // settled without going through settleByPid (event ordering); never leave the toast open
             return;
           }
           const secs = Math.round((Date.now() - started) / 1000);

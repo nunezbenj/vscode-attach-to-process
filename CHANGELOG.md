@@ -16,6 +16,9 @@
   - `attach.waitTimeout`, `attach.waitHelperPath` (use your own copy in `~/bin`)
 - `test-python/quick.py` and `test-python/e2e_wait.py` (breakpoint on the first line of a program
   that exits in a blink, verified through a real injection)
+- Fixed: the *injecting debugpy…* notification could stay open forever. VS Code 1.138 reports the
+  session start only after debugpy has answered the attach, and that event reset the recorded
+  state; the notification now settles on the recorded state, whatever the event order.
 
 ## 1.2.3
 
