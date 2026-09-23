@@ -26,6 +26,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 - **Remote-native** — the extension runs on the remote host under Remote-SSH, so it sees the processes on the server you're connected to.
 - **Preflight with fixes** — checks that `gdb` is installed and `kernel.yama.ptrace_scope` allows attaching, and shows the one-line fix instead of debugpy's traceback wall.
 - **Debug-ready processes** — scripts launched with `python -m debugpy --listen …` are recognized (marked *listening*) and connected to directly instead of injected. There is also a manual **Connect to host:port** command and a **Copy debug-ready launch command** helper for hosts where injection isn't possible.
+- **Run with wait** — for runs that finish before you could find them in a list (a pytest file, a quick script): start them through the bundled `waitattach.py` and they pause until the debugger is attached, which the extension does automatically the moment the process starts waiting. No `launch.json`, nothing added to your code. See [Runs that finish too fast](#runs-that-finish-too-fast-run-with-wait).
 - **Stop Process** — VS Code only offers *Disconnect* for attached sessions. The stop button on the toolbar and in the panel disconnects and terminates the process, with confirmation and a force-kill fallback.
 - **Re-attach guard** — warns when you pick a process that was already attached once in this window (see Limitations).
 
@@ -48,6 +49,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 | Action | How |
 | --- | --- |
 | Attach to a running process | The **plug icon in the activity bar** (left), the plug icon next to the Run/Debug button in the editor title bar (Python files), `Ctrl+Alt+A`, the **Attach** status-bar item, the plug on the debug toolbar, or Command Palette → *Attach: Attach to Running Python Process…* |
+| Debug a run that finishes too fast | *Attach: Copy Run-with-Wait Command* (paste it into any terminal) or `Ctrl+Alt+W` / *Run Current File with Wait* (runs the open file, or pytest on it, in a terminal) — the process pauses until the debugger is attached |
 | Stop a process (like the red Stop button) | The stop button on the debug toolbar, or on any row in the Attach panel — disconnects, sends SIGTERM, offers SIGKILL if needed |
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
@@ -55,6 +57,29 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 | Troubleshoot | *Attach: Show Log*, *Attach: Copy Diagnostic Report*, *Attach: Open Previous Session Logs* |
 
 Try it with the bundled sample: run `python3 test-python/sleeper.py --tag demo` in a terminal, put a breakpoint on the `total += n` line, press `Ctrl+Alt+A` and pick `sleeper.py --tag demo`.
+
+### Runs that finish too fast: run with wait
+
+Attaching only works while the process exists. A pytest file or a quick script is gone before you can pick it — and adding a `launch.json` entry for each of them is exactly the ceremony this extension is meant to remove. So the extension ships a tiny helper, `waitattach.py`, that runs your program only once a debugger is attached:
+
+```bash
+python ~/.vscode-server/extensions/nunezbenj.python-attach-to-process-1.3.0/resources/waitattach.py -m pytest tests/test_x.py -k align
+python …/waitattach.py [-t SECONDS] script.py --your args      # -t 0 = wait forever; default 60 s, then it runs anyway
+```
+
+You never type that path: **Attach: Copy Run-with-Wait Command** puts the right line on the clipboard (for the open file, for pytest on it, or just the prefix so you can add your own arguments), and `Ctrl+Alt+W` / **Run Current File with Wait** runs it in a terminal for you. The command is plain Python with no dependencies, so it works in the integrated terminal, an SSH session, `tmux` — anywhere on that host.
+
+What happens next:
+
+1. The helper prints its PID and pauses. While it waits it keeps a marker file in `/tmp/waitattach-<uid>/`, and the extension watches that directory (inotify, no polling), so the process shows up in the Attach panel **instantly, pinned to the top, marked *waiting for debugger***.
+2. With the default `attach.autoAttachWaiting: workspace`, the extension attaches on its own when the process runs inside your open workspace (its cwd, script or test file). Otherwise — or with `never` — you get a notification with an **Attach** button. `always` attaches to anything of yours that starts waiting on that host.
+3. As soon as debugpy inside the process reports a connected client, the helper gives your breakpoints a second to land and runs the program with the same `sys.argv` and `sys.path[0]` it would have had without the wrapper. The debugger stops on your first breakpoint, even if it is on the first line.
+
+So the whole flow is: set breakpoints, `Ctrl+Alt+W` (or paste the copied command into your SSH session), and you are stopped in your code.
+
+Two VS Code windows on the same host never inject into the same process: the extension claims the waiting process with an atomic rename before attaching, and the other window backs off. If you keep your own copy of the helper somewhere stable (`~/bin/waitattach.py`, so aliases survive extension updates — the picker offers to copy the bundled file's path), point `attach.waitHelperPath` at it; keep the file name, the extension recognizes the process by it.
+
+Try it: open `test-python/quick.py`, put a breakpoint on the `total += i` line, press `Ctrl+Alt+W`, pick *Run quick.py*. Without the helper that script exits in a blink; with it you are stopped on the first iteration.
 
 ### The guaranteed path (no gdb, no ptrace)
 
@@ -81,10 +106,13 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 | `attach.showStatusBarItem` | `true` | Show the status-bar button |
 | `attach.debugpyLogToFile` | `false` | Have debugpy write its own logs (adapter, injector, in-process server) |
 | `attach.verboseLogging` | `false` | Log every process considered, why it was hidden, and the full debug-adapter traffic |
+| `attach.autoAttachWaiting` | `workspace` | What to do when a process started with `waitattach.py` begins waiting: `workspace` attaches if it runs inside this window's workspace and asks otherwise, `always` attaches to any of yours, `never` always asks |
+| `attach.waitTimeout` | `60` | Seconds the generated run-with-wait command lets the process wait before running anyway (`0` = forever) |
+| `attach.waitHelperPath` | `""` | Use your own copy of `waitattach.py` in generated commands (empty = the bundled one) |
 
 ## Limitations
 
-- **Attach is not time travel.** Breakpoints bind when you attach; code that already ran is gone. Great for long-running loops, servers and test runners; for a script that finishes in a second, use `--listen --wait-for-client`.
+- **Attach is not time travel.** Breakpoints bind when you attach; code that already ran is gone. Great for long-running loops, servers and test runners; for a script that finishes in a second, start it with [run with wait](#runs-that-finish-too-fast-run-with-wait) (or `--listen --wait-for-client`).
 - **One injection per process.** After you disconnect from a process attached by PID, debugpy cannot cleanly attach to it again (a second injection reports success but breakpoints never hit). Restart the script, or use the `--listen` path, which supports reconnecting. The picker warns you about this.
 - Processes belonging to other users are never listed (and could not be attached to anyway).
 
@@ -118,6 +146,7 @@ npm install
 npm run compile
 npm test                       # unit tests + live /proc discovery
 python3 test-python/e2e_attach.py   # full injection round trip via DAP (needs gdb + ptrace)
+python3 test-python/e2e_wait.py     # same for run-with-wait: marker, claim, breakpoint on the first line, clean exit
 ```
 
 Press F5 in VS Code to run the extension in an Extension Development Host.

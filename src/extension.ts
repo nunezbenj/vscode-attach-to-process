@@ -9,9 +9,16 @@ import {
   displayTarget,
   formatAge,
   isSupportedPlatform,
+  waitMarkerDir,
+  ensureWaitMarkerDir,
+  readWaitMarkers,
+  claimWaitMarker,
+  releaseWaitMarker,
+  WAIT_HELPER_NAME,
+  WAIT_DEFAULT_TIMEOUT,
 } from "./processes";
 import { runPreflight, describePreflight, PreflightResult, findOnPath } from "./preflight";
-import { AttachSettings, AttachTarget, buildAttachConfig, parseHostPort, listenCommand } from "./config";
+import { AttachSettings, AttachTarget, buildAttachConfig, parseHostPort, listenCommand, waitCommand, tildePath } from "./config";
 import { ProcessTree, ProcessItem } from "./tree";
 
 let output: vscode.OutputChannel;
@@ -26,6 +33,17 @@ const stateByPid = new Map<number, AttachState>();
 /** Resolvers for the progress notification shown while injecting. */
 const settleByPid = new Map<number, () => void>();
 const INJECT_HINT_MS = 15000;
+/** Absolute path of the installed extension (resources/waitattach.py lives under it). */
+let extensionRoot = "";
+/** Run-with-wait markers already acted on (auto-attached or notified): pid -> the marker's start time, so a reused PID counts as new. */
+const handledWaitPids = new Map<number, number | undefined>();
+/** Waiting processes this extension host claimed (renamed <pid> to <pid>.attaching). */
+const claimedByMe = new Set<number>();
+let waitWatcher: fs.FSWatcher | undefined;
+let waitPollTimer: NodeJS.Timeout | undefined;
+let waitScanTimer: NodeJS.Timeout | undefined;
+const WAIT_POLL_MS = 3000;
+const WAIT_TERMINAL_NAME = "Run with wait";
 
 const LOG_KEEP = 400;
 const LOG_FILES_KEEP = 10;
@@ -160,12 +178,14 @@ async function collectEnvironment(): Promise<string> {
     lines.push(`gdb: ${findOnPath("gdb") ? await execFirstLine("gdb", ["--version"]) : "not on PATH"}`);
   }
   lines.push(describePreflight(runPreflight()));
+  const helper = waitHelperPath();
+  lines.push(`run-with-wait helper: ${helper}${fs.existsSync(helper) ? "" : " (MISSING)"}; markers: ${waitMarkerDir()} (${waitWatcher ? "inotify" : waitPollTimer ? "polling" : "not watched"})`);
   return lines.join("\n");
 }
 
 function settingsSummary(): string {
   const c = vscode.workspace.getConfiguration("attach");
-  const keys = ["justMyCode", "processFilter", "showHiddenProcesses", "defaultHost", "defaultPort", "pathMappings", "subProcess", "extraConfig", "debugConsole", "debugpyLogToFile", "verboseLogging"];
+  const keys = ["justMyCode", "processFilter", "showHiddenProcesses", "defaultHost", "defaultPort", "pathMappings", "subProcess", "extraConfig", "debugConsole", "debugpyLogToFile", "verboseLogging", "autoAttachWaiting", "waitTimeout", "waitHelperPath"];
   return keys.map((k) => `  ${k}: ${JSON.stringify(c.get(k))}`).join("\n");
 }
 
@@ -214,6 +234,9 @@ function settings(): AttachSettings & {
   defaultPort: number;
   verbose: boolean;
   showStatusBar: boolean;
+  autoAttachWaiting: "workspace" | "always" | "never";
+  waitTimeout: number;
+  waitHelperPath: string;
 } {
   const c = vscode.workspace.getConfiguration("attach");
   return {
@@ -229,6 +252,9 @@ function settings(): AttachSettings & {
     defaultPort: c.get<number>("defaultPort", 5678),
     verbose: c.get<boolean>("verboseLogging", false),
     showStatusBar: c.get<boolean>("showStatusBarItem", true),
+    autoAttachWaiting: c.get<"workspace" | "always" | "never">("autoAttachWaiting", "workspace"),
+    waitTimeout: c.get<number>("waitTimeout", WAIT_DEFAULT_TIMEOUT),
+    waitHelperPath: c.get<string>("waitHelperPath", ""),
   };
 }
 
@@ -236,6 +262,7 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Attach to Process");
   context.subscriptions.push(output);
   extensionVersion = String(context.extension.packageJSON?.version ?? "?");
+  extensionRoot = context.extensionPath;
   initLogFile(context);
   log(`activated: python-attach-to-process ${extensionVersion} on ${process.platform} (extension host pid ${process.pid})`);
   log(`log file: ${logFile || "(none)"}`);
@@ -244,6 +271,8 @@ export function activate(context: vscode.ExtensionContext): void {
   reg(context, "attach.pickProcess", pickAndAttach);
   reg(context, "attach.connect", connectToListening);
   reg(context, "attach.copyListenCommand", copyListenCommand);
+  reg(context, "attach.copyWaitCommand", copyWaitCommand);
+  reg(context, "attach.runWithWait", runWithWait);
   reg(context, "attach.checkReadiness", checkReadiness);
   reg(context, "attach.showLog", () => output.show(true));
   reg(context, "attach.reportIssue", reportIssue);
@@ -313,6 +342,9 @@ export function activate(context: vscode.ExtensionContext): void {
             stateByPid.delete(pid);
           }
           settleByPid.get(pid)?.();
+          if (claimedByMe.delete(pid)) {
+            releaseWaitMarker(pid); // still waiting (injection failed early)? offer it again
+          }
         }
         tree?.refresh();
       }
@@ -385,10 +417,261 @@ export function activate(context: vscode.ExtensionContext): void {
   statusItem.command = "attach.pickProcess";
   context.subscriptions.push(statusItem);
   updateStatusBar();
+
+  if (isSupportedPlatform()) {
+    startWaitWatcher(context);
+  }
 }
 
 export function deactivate(): void {
-  /* nothing to clean up */
+  stopWaitWatcher();
+}
+
+// ---------------------------------------------------------------------------
+// Run with wait: notice processes started with waitattach.py the moment they start waiting
+// ---------------------------------------------------------------------------
+
+/** The helper to reference in generated commands: the bundled copy, or attach.waitHelperPath. */
+function waitHelperPath(): string {
+  const custom = settings().waitHelperPath.trim();
+  if (custom) {
+    return custom.replace(/^~(?=$|[\\/])/, os.homedir());
+  }
+  return path.join(extensionRoot, "resources", WAIT_HELPER_NAME);
+}
+
+/**
+ * Watch the marker directory. inotify on Linux (and FSEvents on macOS) fires the instant the
+ * helper drops its marker, so there is no periodic /proc scan; a slow poll is the fallback.
+ */
+function startWaitWatcher(context: vscode.ExtensionContext): void {
+  const dir = ensureWaitMarkerDir();
+  if (!dir) {
+    log(`run-with-wait: cannot create ${waitMarkerDir()}; waiting processes will not be detected automatically`);
+    return;
+  }
+  try {
+    waitWatcher = fs.watch(dir, () => scheduleWaitScan());
+    waitWatcher.on("error", (e) => {
+      log(`run-with-wait: watcher error (${e.message}); polling ${dir} every ${WAIT_POLL_MS / 1000}s instead`);
+      waitWatcher?.close();
+      waitWatcher = undefined;
+      waitPollTimer = setInterval(() => scheduleWaitScan(), WAIT_POLL_MS);
+    });
+    log(`run-with-wait: watching ${dir}`);
+  } catch (e) {
+    log(`run-with-wait: fs.watch failed (${(e as Error).message}); polling ${dir} every ${WAIT_POLL_MS / 1000}s instead`);
+    waitPollTimer = setInterval(() => scheduleWaitScan(), WAIT_POLL_MS);
+  }
+  context.subscriptions.push({ dispose: stopWaitWatcher });
+  scheduleWaitScan(); // a helper may already be waiting from before this window opened
+}
+
+function stopWaitWatcher(): void {
+  waitWatcher?.close();
+  waitWatcher = undefined;
+  if (waitPollTimer) {
+    clearInterval(waitPollTimer);
+    waitPollTimer = undefined;
+  }
+  if (waitScanTimer) {
+    clearTimeout(waitScanTimer);
+    waitScanTimer = undefined;
+  }
+}
+
+/** The helper writes <pid>.tmp then renames it; coalesce the burst of events into one scan. */
+function scheduleWaitScan(): void {
+  if (waitScanTimer) {
+    clearTimeout(waitScanTimer);
+  }
+  waitScanTimer = setTimeout(() => {
+    waitScanTimer = undefined;
+    scanWaitMarkers().catch((e) => log(`run-with-wait: scan failed: ${(e as Error).stack ?? e}`));
+  }, 200);
+}
+
+async function scanWaitMarkers(): Promise<void> {
+  const markers = readWaitMarkers();
+  for (const pid of handledWaitPids.keys()) {
+    if (!markers.has(pid)) {
+      handledWaitPids.delete(pid); // the helper proceeded (or died); forget it
+    }
+  }
+  const fresh: number[] = [];
+  for (const [pid, m] of markers) {
+    const seen = handledWaitPids.has(pid) && handledWaitPids.get(pid) === m.started;
+    if (m.state === "waiting" && !seen && !activeByPid.has(pid)) {
+      fresh.push(pid);
+      handledWaitPids.set(pid, m.started);
+    }
+  }
+  if (fresh.length === 0) {
+    tree?.refresh();
+    return;
+  }
+  // No processFilter here: a process the user started with the helper is wanted by definition.
+  const procs = await listPythonProcesses({ log: settings().verbose ? log : undefined });
+  tree?.refresh();
+  for (const pid of fresh) {
+    const p = procs.find((x) => x.pid === pid);
+    if (!p) {
+      log(`run-with-wait: marker for pid ${pid} but no such Python process of yours (exited already?)`);
+      continue;
+    }
+    await onWaitingProcess(p);
+  }
+}
+
+/** Does the process run inside one of this window's workspace folders (cwd, script or a .py argument)? */
+function isInWorkspace(p: PythonProcess): boolean {
+  const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  if (folders.length === 0) {
+    return false;
+  }
+  const candidates: string[] = [];
+  if (p.cwd) {
+    candidates.push(p.cwd);
+  }
+  const resolve = (x: string) => (path.isAbsolute(x) ? x : p.cwd ? path.join(p.cwd, x) : x);
+  if (p.parsed.scriptPath) {
+    candidates.push(resolve(p.parsed.scriptPath));
+  }
+  for (const a of p.parsed.args) {
+    if (!a.startsWith("-") && (a.endsWith(".py") || a.includes("/"))) {
+      candidates.push(resolve(a.split("::")[0])); // pytest node ids: tests/test_x.py::test_y
+    }
+  }
+  const inside = (file: string, folder: string) => {
+    const rel = path.relative(folder, file);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  return candidates.some((c) => folders.some((f) => inside(c, f)));
+}
+
+async function onWaitingProcess(p: PythonProcess): Promise<void> {
+  const label = path.basename(displayTarget(p.parsed, p.cwd));
+  const mode = settings().autoAttachWaiting;
+  const inWs = isInWorkspace(p);
+  const auto = mode === "always" || (mode === "workspace" && inWs);
+  log(`run-with-wait: pid ${p.pid} (${label}, cwd ${p.cwd || "?"}) is waiting; autoAttachWaiting=${mode}, in workspace=${inWs} -> ${auto ? "attaching" : "asking"}`);
+  if (auto) {
+    await attachToProcess(p, runPreflight());
+    return;
+  }
+  const why = mode === "workspace" && !inWs ? (vscode.workspace.workspaceFolders?.length ? " (outside this workspace)" : "") : "";
+  const choice = await vscode.window.showInformationMessage(
+    `${label} (pid ${p.pid}) is waiting for a debugger${why}.`,
+    "Attach",
+    "Always attach automatically",
+  );
+  if (choice === "Always attach automatically") {
+    await vscode.workspace.getConfiguration("attach").update("autoAttachWaiting", "always", vscode.ConfigurationTarget.Global);
+  }
+  if (choice) {
+    await attachToProcess(p, runPreflight());
+  }
+}
+
+/** Absolute path of the Python file in the active editor, or undefined. */
+function activePythonFile(): string | undefined {
+  const doc = vscode.window.activeTextEditor?.document;
+  return doc && doc.languageId === "python" && doc.uri.scheme === "file" ? doc.uri.fsPath : undefined;
+}
+
+function looksLikeTestFile(file: string): boolean {
+  return /^(test_.*|.*_test)\.py$/.test(path.basename(file));
+}
+
+interface WaitCmdItem extends vscode.QuickPickItem {
+  cmd: string;
+}
+
+/** The command variants offered by Copy / Run with wait; the pytest one first for test files. */
+function waitCommandItems(file: string | undefined, forRun: boolean): WaitCmdItem[] {
+  const s = settings();
+  const home = os.homedir();
+  const helper = tildePath(waitHelperPath(), home);
+  const timeout = s.waitTimeout;
+  const items: WaitCmdItem[] = [];
+  if (file) {
+    const shown = tildePath(file, home);
+    const base = path.basename(file);
+    const script: WaitCmdItem = { label: `$(file-code) Run ${base}`, cmd: waitCommand(helper, { script: shown }, timeout) };
+    const pytest: WaitCmdItem = { label: `$(beaker) Run pytest on ${base}`, cmd: waitCommand(helper, { module: "pytest", args: [shown] }, timeout) };
+    items.push(...(looksLikeTestFile(file) ? [pytest, script] : [script, pytest]));
+  }
+  if (!forRun) {
+    items.push(
+      { label: "$(terminal) Prefix only — paste it and add your own script or -m module", cmd: waitCommand(helper, {}, timeout) + " " },
+      { label: "$(beaker) Prefix for pytest — paste it and add the test file or -k expression", cmd: waitCommand(helper, { module: "pytest" }, timeout) + " " },
+      { label: `$(file) Path of the bundled ${WAIT_HELPER_NAME} — to copy it into ~/bin or an alias`, cmd: waitHelperPath() },
+    );
+  }
+  for (const it of items) {
+    it.detail = it.cmd;
+  }
+  return items;
+}
+
+async function copyWaitCommand(): Promise<void> {
+  const helper = waitHelperPath();
+  if (!fs.existsSync(helper)) {
+    vscode.window.showErrorMessage(`Run-with-wait helper not found at ${helper}. Check attach.waitHelperPath.`);
+    return;
+  }
+  const file = activePythonFile();
+  const pick = await vscode.window.showQuickPick(waitCommandItems(file, false), {
+    title: "Copy Run-with-Wait Command",
+    placeHolder: file ? "What should the copied command run?" : "Open a Python file to get commands for it, or copy a prefix",
+    matchOnDetail: true,
+  });
+  if (!pick) {
+    return;
+  }
+  await vscode.env.clipboard.writeText(pick.cmd);
+  log(`copied run-with-wait command: ${pick.cmd}`);
+  if (pick.cmd === helper) {
+    vscode.window.setStatusBarMessage(`$(check) Copied path of ${WAIT_HELPER_NAME}`, 5000);
+    return;
+  }
+  const mode = settings().autoAttachWaiting;
+  vscode.window.showInformationMessage(
+    `Copied: ${pick.cmd.trim()}  — run it in any terminal or SSH session on this host. The process pauses until the debugger attaches${
+      mode === "never" ? "; you'll be asked to attach when it starts waiting" : mode === "always" ? ", which happens automatically" : ", automatically when it runs inside this workspace"
+    }.`,
+  );
+}
+
+/** Set breakpoints, run this: the file starts in a terminal, pauses, and the debugger lands on the first breakpoint. */
+async function runWithWait(): Promise<void> {
+  const file = activePythonFile();
+  if (!file) {
+    vscode.window.showInformationMessage("Open the Python file (or test file) you want to run with wait, then run this command again.");
+    return;
+  }
+  const helper = waitHelperPath();
+  if (!fs.existsSync(helper)) {
+    vscode.window.showErrorMessage(`Run-with-wait helper not found at ${helper}. Check attach.waitHelperPath.`);
+    return;
+  }
+  const items = waitCommandItems(file, true);
+  const pick = await vscode.window.showQuickPick(items, { title: "Run Current File with Wait", placeHolder: "Runs in a terminal and waits for the debugger", matchOnDetail: true });
+  if (!pick) {
+    return;
+  }
+  const doc = vscode.window.activeTextEditor?.document;
+  if (doc?.isDirty) {
+    await doc.save();
+  }
+  let term = vscode.window.terminals.find((t) => t.name === WAIT_TERMINAL_NAME && t.exitStatus === undefined);
+  if (!term) {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    term = vscode.window.createTerminal({ name: WAIT_TERMINAL_NAME, cwd: folder });
+  }
+  term.show(true);
+  term.sendText(pick.cmd, true);
+  log(`run-with-wait: sent to terminal "${WAIT_TERMINAL_NAME}": ${pick.cmd}`);
 }
 
 function updateStatusBar(): void {
@@ -593,6 +876,40 @@ async function attachToProcess(p: PythonProcess, preflight: PreflightResult): Pr
     }
   }
 
+  // Started with waitattach.py: claim it, so another VS Code window on this host does not inject too.
+  let claimed = false;
+  if (p.parsed.waitAttach) {
+    const m = readWaitMarkers().get(p.pid);
+    if (m?.state === "waiting" && claimWaitMarker(p.pid)) {
+      claimed = true;
+      claimedByMe.add(p.pid);
+      handledWaitPids.set(p.pid, m.started);
+    } else if (m?.state === "attaching" && claimedByMe.has(p.pid)) {
+      log(`pid ${p.pid}: retrying an attach on a process this window already claimed`);
+    } else if (m) {
+      log(`pid ${p.pid}: run-with-wait marker already claimed by another extension host`);
+      const choice = await vscode.window.showWarningMessage(
+        `${label} (pid ${p.pid}) is already being attached to by another VS Code window. Two injections into one process do not work.`,
+        "Attach anyway",
+      );
+      if (choice !== "Attach anyway") {
+        return;
+      }
+    }
+  }
+  let started = false;
+  try {
+    started = await attachByPid(p, preflight, label);
+  } finally {
+    if (claimed && !started) {
+      claimedByMe.delete(p.pid);
+      releaseWaitMarker(p.pid); // offer the row again (and let another window take it)
+    }
+  }
+}
+
+/** Preflight, then inject. Returns true when the debug session was accepted. */
+async function attachByPid(p: PythonProcess, preflight: PreflightResult, label: string): Promise<boolean> {
   if (preflight.blockers.length > 0) {
     const b = preflight.blockers[0];
     const actions = b.fix ? ["Copy fix command", "Connect to host:port instead"] : ["Connect to host:port instead"];
@@ -603,7 +920,7 @@ async function attachToProcess(p: PythonProcess, preflight: PreflightResult): Pr
     } else if (choice === "Connect to host:port instead") {
       await connectToListening();
     }
-    return;
+    return false;
   }
   if (preflight.warnings.length > 0) {
     const w = preflight.warnings[0];
@@ -612,13 +929,13 @@ async function attachToProcess(p: PythonProcess, preflight: PreflightResult): Pr
     if (choice === "Copy fix command") {
       await vscode.env.clipboard.writeText(w.fix);
       vscode.window.setStatusBarMessage(`$(check) Copied: ${w.fix}`, 5000);
-      return;
+      return false;
     }
     if (choice !== "Attach anyway") {
-      return;
+      return false;
     }
   }
-  await startAttach({ kind: "pid", pid: p.pid, label });
+  return startAttach({ kind: "pid", pid: p.pid, label });
 }
 
 async function onAttached(session: vscode.DebugSession, pid: number): Promise<void> {
@@ -637,7 +954,7 @@ async function onAttached(session: vscode.DebugSession, pid: number): Promise<vo
   tree?.refresh();
 }
 
-async function startAttach(target: AttachTarget): Promise<void> {
+async function startAttach(target: AttachTarget): Promise<boolean> {
   const s = settings();
   const config = buildAttachConfig(target, s);
   log(`starting debug session: ${JSON.stringify(config)}`);
@@ -666,6 +983,7 @@ async function startAttach(target: AttachTarget): Promise<void> {
       output.show(true);
     }
   }
+  return ok;
 }
 
 /** Notification that lives until debugpy inside the target has connected (or the session dies). */

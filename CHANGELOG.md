@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.0
+
+- **Run with wait** for runs that finish before you could attach (pytest files, quick scripts):
+  the bundled `resources/waitattach.py` pauses the program until a debugger is attached, then runs
+  it with its normal `sys.argv`/`sys.path`. No `launch.json`, nothing added to your code.
+  - **Attach: Copy Run-with-Wait Command** (for the open file, pytest on it, or a prefix to complete)
+    and **Run Current File with Wait** / `Ctrl+Alt+W` (runs it in a terminal)
+  - Waiting processes are detected the instant they start (the helper drops a marker file in
+    `/tmp/waitattach-<uid>/`, watched with inotify — no polling) and are pinned to the top of the
+    Attach panel as *waiting for debugger*
+  - `attach.autoAttachWaiting` (`workspace` by default): attach automatically when the process runs
+    inside the open workspace, otherwise a notification with an **Attach** button; `always` / `never`
+  - Two windows on one host cannot double-inject: the process is claimed with an atomic rename first
+  - `attach.waitTimeout`, `attach.waitHelperPath` (use your own copy in `~/bin`)
+- `test-python/quick.py` and `test-python/e2e_wait.py` (breakpoint on the first line of a program
+  that exits in a blink, verified through a real injection)
+
 ## 1.2.3
 
 - "1 threads" → "1 thread"; README screenshot of a real attach

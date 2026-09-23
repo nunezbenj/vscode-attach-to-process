@@ -15,9 +15,18 @@ Working notes for development. Not packaged in the VSIX (see `.vscodeignore`).
 
 ## Ideas
 
-- [ ] One-click "run this file debug-ready in a terminal" (`python -m debugpy --listen`)
 - [ ] Attach to all workers of a multiprocessing job (subProcess) from one pick
 - [ ] Localization
+
+## Ideas for run-with-wait (1.3.0 shipped the base)
+
+- [ ] Countdown in the panel row (the marker has `started`/`timeout`; needs the tree to re-fire on a timer)
+- [ ] "Re-run last wait command" (remember the last generated command per workspace)
+- [ ] Recognize a `.attaching` claim left behind by a window that reloaded mid-injection (offer it again after a grace period)
+
+## Done in 1.3.0
+
+- [x] Run with wait: bundled `waitattach.py`, copy/run commands, marker watcher, auto-attach, claim
 
 ## Done in 1.0.0
 

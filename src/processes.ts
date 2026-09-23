@@ -19,6 +19,20 @@ export interface DebugpyListen {
   waitForClient: boolean;
 }
 
+export interface WaitAttach {
+  /** Seconds the helper waits before running anyway (0 = forever). */
+  timeout: number;
+}
+
+/** What the run-with-wait marker file says about a process started via waitattach.py. */
+export interface WaitMarker {
+  /** "waiting": nobody has attached yet. "attaching": an extension host claimed it and is injecting. */
+  state: "waiting" | "attaching";
+  timeout?: number;
+  started?: number;
+  cwd?: string;
+}
+
 export interface ParsedCmdline {
   /** Human label of what is running: script path, "-m module", "-c <inline>", or "<stdin>". */
   target: string;
@@ -32,6 +46,8 @@ export interface ParsedCmdline {
   debugpyListen?: DebugpyListen;
   /** True for debugpy's own helper processes (adapter, injector, launcher). */
   debugpyInternal: boolean;
+  /** Set when the process was launched via `python waitattach.py [-t N] target`. */
+  waitAttach?: WaitAttach;
 }
 
 export interface PythonProcess {
@@ -44,6 +60,8 @@ export interface PythonProcess {
   /** Editor/tooling process the picker hides by default; `hiddenReason` says why. */
   hidden: boolean;
   hiddenReason?: string;
+  /** Present while a waitattach.py-started process is still waiting for a debugger. */
+  wait?: WaitMarker;
 }
 
 export interface ListOptions {
@@ -100,7 +118,35 @@ export function parsePythonCmdline(argv: string[]): ParsedCmdline {
       /[\\/]debugpy[\\/](adapter|launcher)$/.test(out.scriptPath ?? "")) {
     out.debugpyInternal = true;
   }
+  // run-with-wait wrapping: `python [anywhere/]waitattach.py [-t N] target ...`
+  if (out.scriptPath && path.basename(out.scriptPath) === WAIT_HELPER_NAME) {
+    const inner = parseWaitAttachArgs(out.args);
+    const innerParsed = parseInterpreterArgs(inner.rest, 0);
+    out.target = innerParsed.target;
+    out.scriptPath = innerParsed.scriptPath;
+    out.module = innerParsed.module;
+    out.args = innerParsed.args;
+    out.waitAttach = { timeout: inner.timeout };
+  }
   return out;
+}
+
+/** File name of the bundled run-with-wait helper (resources/waitattach.py). */
+export const WAIT_HELPER_NAME = "waitattach.py";
+export const WAIT_DEFAULT_TIMEOUT = 60;
+
+/** Parse the helper's own options (`-t N` / `--timeout N`) up to the user's target. */
+export function parseWaitAttachArgs(args: string[]): { timeout: number; rest: string[] } {
+  let timeout = WAIT_DEFAULT_TIMEOUT;
+  let i = 0;
+  while (i < args.length && (args[i] === "-t" || args[i] === "--timeout")) {
+    const v = parseFloat(args[i + 1] ?? "");
+    if (Number.isFinite(v)) {
+      timeout = v;
+    }
+    i += 2;
+  }
+  return { timeout, rest: args.slice(i) };
 }
 
 function parseInterpreterArgs(argv: string[], start: number): Omit<ParsedCmdline, "debugpyInternal"> {
@@ -221,6 +267,9 @@ export function classifyHidden(parsed: ParsedCmdline, cmdline: string[]): string
   if (parsed.debugpyInternal) {
     return "debugpy helper (adapter/injector)";
   }
+  if (parsed.waitAttach) {
+    return undefined; // the user's own run, even though the bundled helper sits under the extensions dir
+  }
   const joined = cmdline.join(" ");
   if (TOOLING_PATH.test(joined)) {
     return "editor tooling (installed under the VS Code Server / extensions directory)";
@@ -287,8 +336,95 @@ export async function listPythonProcesses(opts: ListOptions = {}): Promise<Pytho
   if (opts.filter) {
     procs = procs.filter((p) => opts.filter!.test(p.cmdline.join(" ")));
   }
-  procs.sort((a, b) => (a.ageSeconds ?? Infinity) - (b.ageSeconds ?? Infinity));
+  const markers = readWaitMarkers();
+  for (const p of procs) {
+    if (p.parsed.waitAttach) {
+      const m = markers.get(p.pid);
+      if (m) {
+        p.wait = m;
+        if (!p.cwd && m.cwd) {
+          p.cwd = m.cwd; // ps-based listing (macOS) has no cwd; the helper recorded it
+        }
+      }
+    }
+  }
+  // Processes waiting for a debugger first, then newest first.
+  procs.sort((a, b) => Number(!a.wait) - Number(!b.wait) || (a.ageSeconds ?? Infinity) - (b.ageSeconds ?? Infinity));
   return procs;
+}
+
+// ---------------------------------------------------------------------------
+// Run-with-wait markers (written by resources/waitattach.py while it waits)
+// ---------------------------------------------------------------------------
+
+/** Directory the helper writes its markers to: <tmpdir>/waitattach-<uid>. Same rule as in waitattach.py. */
+export function waitMarkerDir(): string {
+  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  return path.join(os.tmpdir(), `waitattach-${uid}`);
+}
+
+/** Markers currently on disk, keyed by PID. Never throws. */
+export function readWaitMarkers(dir: string = waitMarkerDir()): Map<number, WaitMarker> {
+  const out = new Map<number, WaitMarker>();
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    const m = /^(\d+)(\.attaching)?$/.exec(name);
+    if (!m) {
+      continue;
+    }
+    const pid = parseInt(m[1], 10);
+    const marker: WaitMarker = { state: m[2] ? "attaching" : "waiting" };
+    try {
+      const body = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as Partial<WaitMarker>;
+      marker.timeout = typeof body.timeout === "number" ? body.timeout : undefined;
+      marker.started = typeof body.started === "number" ? body.started : undefined;
+      marker.cwd = typeof body.cwd === "string" ? body.cwd : undefined;
+    } catch {
+      /* partially written or unreadable: still a marker */
+    }
+    const prev = out.get(pid);
+    if (!prev || prev.state === "waiting") {
+      out.set(pid, marker); // "attaching" wins if both names exist for a moment
+    }
+  }
+  return out;
+}
+
+/**
+ * Claim a waiting process before attaching, so two VS Code windows on the same host never
+ * inject into the same process. The rename is atomic: exactly one caller gets true.
+ */
+export function claimWaitMarker(pid: number, dir: string = waitMarkerDir()): boolean {
+  try {
+    fs.renameSync(path.join(dir, String(pid)), path.join(dir, `${pid}.attaching`));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Undo a claim when the debug session could not be started, so the row is offered again. */
+export function releaseWaitMarker(pid: number, dir: string = waitMarkerDir()): void {
+  try {
+    fs.renameSync(path.join(dir, `${pid}.attaching`), path.join(dir, String(pid)));
+  } catch {
+    /* the helper already proceeded and removed it */
+  }
+}
+
+/** Create the marker directory (0700) so it can be watched before the first helper runs. */
+export function ensureWaitMarkerDir(dir: string = waitMarkerDir()): string | undefined {
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return dir;
+  } catch {
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------

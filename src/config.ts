@@ -79,3 +79,48 @@ export function parseHostPort(text: string, defaultHost: string): { host: string
 export function listenCommand(port: number): string {
   return `python -m debugpy --listen ${port} --wait-for-client your_script.py`;
 }
+
+// ---------------------------------------------------------------------------
+// Run-with-wait command (resources/waitattach.py)
+// ---------------------------------------------------------------------------
+
+/** POSIX-shell quoting for one word: unchanged when safe, single-quoted otherwise. */
+export function shellQuote(word: string): string {
+  if (word !== "" && /^[A-Za-z0-9_@%+=:,./~-]+$/.test(word)) {
+    return word;
+  }
+  return `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Show a path under the user's home as ~/... (only when it needs no quoting; a quoted ~ would not expand). */
+export function tildePath(p: string, home: string): string {
+  if (home && p.startsWith(home + "/") && shellQuote(p) === p) {
+    return "~" + p.slice(home.length);
+  }
+  return p;
+}
+
+export interface WaitCommandTarget {
+  /** Script path, or module name when `module` is set. */
+  script?: string;
+  module?: string;
+  args?: string[];
+}
+
+/**
+ * `python <helper> [-t N] (script.py | -m module) [args]`
+ * The timeout is emitted only when it differs from the helper's built-in default.
+ */
+export function waitCommand(helperPath: string, target: WaitCommandTarget, timeout: number, defaultTimeout = 60, python = "python"): string {
+  const words = [python, helperPath];
+  if (timeout !== defaultTimeout) {
+    words.push("-t", String(timeout));
+  }
+  if (target.module) {
+    words.push("-m", target.module);
+  } else if (target.script) {
+    words.push(target.script);
+  }
+  words.push(...(target.args ?? []));
+  return words.map(shellQuote).join(" ");
+}

@@ -11,9 +11,16 @@ import {
   parseStatStartTime,
   listPythonProcesses,
   isPythonExecutable,
+  parseWaitAttachArgs,
+  readWaitMarkers,
+  claimWaitMarker,
+  releaseWaitMarker,
+  ensureWaitMarkerDir,
 } from "../processes";
-import { buildAttachConfig, parseHostPort } from "../config";
+import { buildAttachConfig, parseHostPort, shellQuote, tildePath, waitCommand } from "../config";
 import { findOnPath } from "../preflight";
+import * as fs from "fs";
+import * as os from "os";
 
 describe("isPythonExecutable", () => {
   it("matches interpreter names", () => {
@@ -75,6 +82,104 @@ describe("parsePythonCmdline", () => {
     assert.ok(parsePythonCmdline(["python", "-m", "debugpy.adapter", "--for-server", "1"]).debugpyInternal);
     assert.ok(parsePythonCmdline(["python", "/x/libs/debugpy/adapter", "--host", "127.0.0.1"]).debugpyInternal);
     assert.ok(parsePythonCmdline(["python", "/x/libs/debugpy/launcher", "1234", "--", "s.py"]).debugpyInternal);
+  });
+});
+
+describe("run-with-wait wrapper (waitattach.py)", () => {
+  it("exposes the user's script and the timeout", () => {
+    const r = parsePythonCmdline(["python3", "/home/u/.vscode-server/extensions/nunezbenj.python-attach-to-process-1.3.0/resources/waitattach.py", "-t", "30", "tests/test_x.py", "--tag", "a"]);
+    assert.strictEqual(r.target, "tests/test_x.py");
+    assert.strictEqual(r.scriptPath, "tests/test_x.py");
+    assert.deepStrictEqual(r.args, ["--tag", "a"]);
+    assert.deepStrictEqual(r.waitAttach, { timeout: 30 });
+    assert.strictEqual(r.debugpyInternal, false);
+  });
+  it("-m pytest target, default timeout, own copy in ~/bin", () => {
+    const r = parsePythonCmdline(["python", "/home/u/bin/waitattach.py", "-m", "pytest", "-k", "align", "tests/"]);
+    assert.strictEqual(r.module, "pytest");
+    assert.strictEqual(r.target, "-m pytest");
+    assert.deepStrictEqual(r.args, ["-k", "align", "tests/"]);
+    assert.deepStrictEqual(r.waitAttach, { timeout: 60 });
+  });
+  it("--timeout 0 means forever; bad values fall back to the default", () => {
+    assert.deepStrictEqual(parseWaitAttachArgs(["--timeout", "0", "s.py"]), { timeout: 0, rest: ["s.py"] });
+    assert.deepStrictEqual(parseWaitAttachArgs(["-t", "abc", "s.py"]), { timeout: 60, rest: ["s.py"] });
+    assert.deepStrictEqual(parseWaitAttachArgs(["s.py", "-t", "5"]), { timeout: 60, rest: ["s.py", "-t", "5"] });
+  });
+  it("is never hidden, even though the bundled helper lives under the extensions dir", () => {
+    const argv = ["python", "/home/u/.vscode-server/extensions/nunezbenj.python-attach-to-process-1.3.0/resources/waitattach.py", "run.py"];
+    assert.strictEqual(classifyHidden(parsePythonCmdline(argv), argv), undefined);
+  });
+  it("a script that merely mentions waitattach elsewhere is not a wrapper", () => {
+    const r = parsePythonCmdline(["python", "tools/waitattach_test.py", "waitattach.py"]);
+    assert.strictEqual(r.waitAttach, undefined);
+    assert.strictEqual(r.scriptPath, "tools/waitattach_test.py");
+  });
+});
+
+describe("run-with-wait markers", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wa-test-"));
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("reads waiting and attaching markers, ignores other files", () => {
+    fs.writeFileSync(path.join(dir, "101"), JSON.stringify({ pid: 101, started: 1.5, timeout: 30, cwd: "/home/u/proj" }));
+    fs.writeFileSync(path.join(dir, "102.attaching"), "{}");
+    fs.writeFileSync(path.join(dir, "103"), "not json");
+    fs.writeFileSync(path.join(dir, "104.tmp"), "{}");
+    fs.writeFileSync(path.join(dir, "junk"), "");
+    const m = readWaitMarkers(dir);
+    assert.deepStrictEqual(m.get(101), { state: "waiting", timeout: 30, started: 1.5, cwd: "/home/u/proj" });
+    assert.deepStrictEqual(m.get(102), { state: "attaching", timeout: undefined, started: undefined, cwd: undefined });
+    assert.strictEqual(m.get(103)?.state, "waiting");
+    assert.strictEqual(m.has(104), false);
+    assert.strictEqual(m.size, 3);
+  });
+  it("claim is exclusive and release undoes it", () => {
+    assert.strictEqual(claimWaitMarker(101, dir), true);
+    assert.strictEqual(claimWaitMarker(101, dir), false); // a second window loses the race
+    assert.strictEqual(readWaitMarkers(dir).get(101)?.state, "attaching");
+    releaseWaitMarker(101, dir);
+    assert.strictEqual(readWaitMarkers(dir).get(101)?.state, "waiting");
+    assert.strictEqual(claimWaitMarker(999, dir), false);
+    releaseWaitMarker(999, dir); // no marker: must not throw
+  });
+  it("missing directory reads as empty; ensureWaitMarkerDir creates it 0700", () => {
+    assert.strictEqual(readWaitMarkers(path.join(dir, "nope")).size, 0);
+    const d = ensureWaitMarkerDir(path.join(dir, "new", "deep"));
+    assert.ok(d && fs.statSync(d).isDirectory());
+    if (process.platform !== "win32") {
+      assert.strictEqual(fs.statSync(d!).mode & 0o777, 0o700);
+    }
+  });
+});
+
+describe("waitCommand / shellQuote / tildePath", () => {
+  it("quotes only what needs it", () => {
+    assert.strictEqual(shellQuote("tests/test_x.py"), "tests/test_x.py");
+    assert.strictEqual(shellQuote("~/bin/waitattach.py"), "~/bin/waitattach.py");
+    assert.strictEqual(shellQuote("a b"), "'a b'");
+    assert.strictEqual(shellQuote("it's"), "'it'\\''s'");
+    assert.strictEqual(shellQuote(""), "''");
+    assert.strictEqual(shellQuote("-k"), "-k");
+  });
+  it("shortens home to ~ unless the path would need quotes", () => {
+    assert.strictEqual(tildePath("/home/u/bin/waitattach.py", "/home/u"), "~/bin/waitattach.py");
+    assert.strictEqual(tildePath("/home/u/my proj/x.py", "/home/u"), "/home/u/my proj/x.py");
+    assert.strictEqual(tildePath("/opt/x.py", "/home/u"), "/opt/x.py");
+    assert.strictEqual(tildePath("/home/user2/x.py", "/home/u"), "/home/user2/x.py");
+  });
+  it("builds script, module and prefix commands; -t only when not the default", () => {
+    assert.strictEqual(waitCommand("~/w.py", { script: "run.py", args: ["--suts", "10.1.1.1"] }, 60), "python ~/w.py run.py --suts 10.1.1.1");
+    assert.strictEqual(waitCommand("~/w.py", { module: "pytest", args: ["tests/test_x.py"] }, 120), "python ~/w.py -t 120 -m pytest tests/test_x.py");
+    assert.strictEqual(waitCommand("~/w.py", {}, 0), "python ~/w.py -t 0");
+    assert.strictEqual(waitCommand("/p/with space/w.py", { script: "a b.py" }, 60), "python '/p/with space/w.py' 'a b.py'");
+  });
+  it("round-trips through the process parser", () => {
+    const cmd = waitCommand("/home/u/bin/waitattach.py", { module: "pytest", args: ["-k", "keyless", "tests/test_pa10015.py"] }, 30);
+    const r = parsePythonCmdline(cmd.split(" "));
+    assert.strictEqual(r.module, "pytest");
+    assert.deepStrictEqual(r.args, ["-k", "keyless", "tests/test_pa10015.py"]);
+    assert.deepStrictEqual(r.waitAttach, { timeout: 30 });
   });
 });
 
@@ -188,5 +293,31 @@ describe("live process discovery", function () {
     const procs = await listPythonProcesses({ filter: /mocha-live/ });
     assert.ok(procs.every((p) => p.cmdline.join(" ").includes("mocha-live")));
     assert.ok(procs.some((p) => p.pid === child!.pid));
+  });
+
+  it("sees a waitattach.py run as waiting (pinned first) and as running once it proceeds", async function () {
+    this.timeout(15000);
+    const helper = path.join(__dirname, "..", "..", "resources", "waitattach.py");
+    const w = spawn("python3", [helper, "-t", "2", script, "--tag", "mocha-wait"], { cwd: path.dirname(script), stdio: "ignore" });
+    try {
+      await new Promise((r) => setTimeout(r, 700));
+      let procs = await listPythonProcesses();
+      const mine = procs.find((p) => p.pid === w.pid);
+      assert.ok(mine, `waitattach pid ${w.pid} not listed`);
+      assert.strictEqual(mine.parsed.scriptPath, script);
+      assert.deepStrictEqual(mine.parsed.args, ["--tag", "mocha-wait"]);
+      assert.deepStrictEqual(mine.parsed.waitAttach, { timeout: 2 });
+      assert.strictEqual(mine.wait?.state, "waiting");
+      assert.strictEqual(mine.wait?.cwd, path.dirname(script));
+      assert.strictEqual(mine.hidden, false);
+      assert.strictEqual(procs[0].pid, w.pid, "waiting process should be listed first");
+      await new Promise((r) => setTimeout(r, 3000)); // -t 2 elapsed: the helper removed its marker and runs the sleeper
+      procs = await listPythonProcesses();
+      const later = procs.find((p) => p.pid === w.pid);
+      assert.ok(later, "process should still be running");
+      assert.strictEqual(later.wait, undefined);
+    } finally {
+      w.kill();
+    }
   });
 });

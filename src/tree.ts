@@ -26,6 +26,11 @@ export class ProcessItem extends vscode.TreeItem {
     if (proc.parsed.debugpyListen) {
       bits.push(`listening :${proc.parsed.debugpyListen.port}`);
     }
+    if (proc.wait?.state === "waiting" && !active) {
+      bits.push("waiting for debugger");
+    } else if (proc.wait?.state === "attaching" && !active) {
+      bits.push("being attached…");
+    }
     if (active && state?.phase === "injecting") {
       bits.push("injecting debugpy…");
     } else if (active && state?.phase === "attached") {
@@ -44,6 +49,10 @@ export class ProcessItem extends vscode.TreeItem {
     if (proc.exe) {
       md.appendMarkdown(`\n\ninterpreter: \`${proc.exe}\``);
     }
+    if (proc.parsed.waitAttach) {
+      const t = proc.parsed.waitAttach.timeout;
+      md.appendMarkdown(`\n\n_started with waitattach.py${proc.wait ? ` — waiting for a debugger (${t > 0 ? `runs anyway after ${t}s` : "no timeout"})` : " — already running"}_`);
+    }
     if (proc.hiddenReason) {
       md.appendMarkdown(`\n\n_hidden by default: ${proc.hiddenReason}_`);
     }
@@ -55,7 +64,9 @@ export class ProcessItem extends vscode.TreeItem {
           ? "debug"
           : state?.phase === "failed"
             ? "error"
-            : proc.hidden
+            : proc.wait
+              ? "clock"
+              : proc.hidden
               ? "eye-closed"
               : proc.parsed.debugpyListen
                 ? "broadcast"
@@ -107,7 +118,7 @@ export class ProcessTree implements vscode.TreeDataProvider<ProcessItem>, vscode
       return;
     }
     const procs = await this.list();
-    const key = procs.map((p) => `${p.pid}:${this.deps.isActive(p.pid)}`).join(",");
+    const key = procs.map((p) => `${p.pid}:${this.deps.isActive(p.pid)}:${p.wait?.state ?? ""}`).join(",");
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.emitter.fire(undefined);
@@ -151,7 +162,7 @@ export class ProcessTree implements vscode.TreeDataProvider<ProcessItem>, vscode
       this.deps.log(`process list failed: ${(e as Error).stack ?? e}`);
       return [];
     }
-    this.lastKey = procs.map((p) => `${p.pid}:${this.deps.isActive(p.pid)}`).join(",");
+    this.lastKey = procs.map((p) => `${p.pid}:${this.deps.isActive(p.pid)}:${p.wait?.state ?? ""}`).join(",");
     return procs.map((p) => new ProcessItem(p, this.deps.isActive(p.pid), this.deps.wasInjected(p.pid), this.deps.state(p.pid)));
   }
 
