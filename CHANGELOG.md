@@ -5,8 +5,9 @@
 - **Run with wait** for runs that finish before you could attach (pytest files, quick scripts):
   the bundled `resources/waitattach.py` pauses the program until a debugger is attached, then runs
   it with its normal `sys.argv`/`sys.path`. No `launch.json`, nothing added to your code.
-  - **Attach: Copy Run-with-Wait Command** (for the open file, pytest on it, or a prefix to complete)
-    and **Run Current File with Wait** / `Ctrl+Alt+W` (runs it in a terminal)
+  - **Attach: Copy Run-with-Wait Command** and **Run with Wait** / `Ctrl+Alt+W` (runs it in a
+    terminal): the open file, pytest on it, **Custom command…** (anything after `waitattach.py`,
+    remembered per workspace and offered as *Run again* next time), or a prefix to complete
   - Waiting processes are detected the instant they start (the helper drops a marker file in
     `/tmp/waitattach-<uid>/`, watched with inotify — no polling) and are pinned to the top of the
     Attach panel as *waiting for debugger*

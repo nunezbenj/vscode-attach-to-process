@@ -63,7 +63,7 @@
       },
       {
         "command": "attach.runWithWait",
-        "title": "Run Current File with Wait (pauses until the debugger attaches)",
+        "title": "Run with Wait (current file, last command, or custom)…",
         "category": "Attach",
         "icon": "$(clock)"
       },
@@ -300,10 +300,6 @@
         {
           "command": "attach.copyPid",
           "when": "false"
-        },
-        {
-          "command": "attach.runWithWait",
-          "when": "editorLangId == python"
         }
       ]
     },
@@ -326,8 +322,7 @@
       {
         "command": "attach.runWithWait",
         "key": "ctrl+alt+w",
-        "mac": "cmd+alt+w",
-        "when": "editorLangId == python"
+        "mac": "cmd+alt+w"
       }
     ],
     "configuration": {

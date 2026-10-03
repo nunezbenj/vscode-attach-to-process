@@ -35,6 +35,9 @@ const settleByPid = new Map<number, () => void>();
 const INJECT_HINT_MS = 15000;
 /** Absolute path of the installed extension (resources/waitattach.py lives under it). */
 let extensionRoot = "";
+let extContext: vscode.ExtensionContext | undefined;
+/** workspaceState key: what the user last typed after waitattach.py in this workspace (Custom command…). */
+const LAST_WAIT_ARGS_KEY = "attach.lastWaitArgs";
 /** Run-with-wait markers already acted on (auto-attached or notified): pid -> the marker's start time, so a reused PID counts as new. */
 const handledWaitPids = new Map<number, number | undefined>();
 /** Waiting processes this extension host claimed (renamed <pid> to <pid>.attaching). */
@@ -263,6 +266,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(output);
   extensionVersion = String(context.extension.packageJSON?.version ?? "?");
   extensionRoot = context.extensionPath;
+  extContext = context;
   initLogFile(context);
   log(`activated: python-attach-to-process ${extensionVersion} on ${process.platform} (extension host pid ${process.pid})`);
   log(`log file: ${logFile || "(none)"}`);
@@ -589,15 +593,26 @@ function looksLikeTestFile(file: string): boolean {
 
 interface WaitCmdItem extends vscode.QuickPickItem {
   cmd: string;
+  /** Ask for the part after waitattach.py (shell text, used verbatim) and remember it for this workspace. */
+  custom?: boolean;
 }
 
-/** The command variants offered by Copy / Run with wait; the pytest one first for test files. */
+/**
+ * The command variants offered by Copy / Run with wait: the command used last time in this
+ * workspace first, then the open file (pytest first for test files), then a custom command —
+ * anything the file-based items cannot express, like `-m manim -ql main.py MyScene`.
+ */
 function waitCommandItems(file: string | undefined, forRun: boolean): WaitCmdItem[] {
   const s = settings();
   const home = os.homedir();
   const helper = tildePath(waitHelperPath(), home);
   const timeout = s.waitTimeout;
+  const prefix = waitCommand(helper, {}, timeout);
   const items: WaitCmdItem[] = [];
+  const lastArgs = extContext?.workspaceState.get<string>(LAST_WAIT_ARGS_KEY);
+  if (lastArgs) {
+    items.push({ label: "$(history) Run again", description: lastArgs, cmd: `${prefix} ${lastArgs}` });
+  }
   if (file) {
     const shown = tildePath(file, home);
     const base = path.basename(file);
@@ -605,6 +620,7 @@ function waitCommandItems(file: string | undefined, forRun: boolean): WaitCmdIte
     const pytest: WaitCmdItem = { label: `$(beaker) Run pytest on ${base}`, cmd: waitCommand(helper, { module: "pytest", args: [shown] }, timeout) };
     items.push(...(looksLikeTestFile(file) ? [pytest, script] : [script, pytest]));
   }
+  items.push({ label: "$(edit) Custom command…", description: "anything after waitattach.py, e.g. -m manim -ql main.py MyScene", cmd: prefix, custom: true });
   if (!forRun) {
     items.push(
       { label: "$(terminal) Prefix only — paste it and add your own script or -m module", cmd: waitCommand(helper, {}, timeout) + " " },
@@ -613,9 +629,31 @@ function waitCommandItems(file: string | undefined, forRun: boolean): WaitCmdIte
     );
   }
   for (const it of items) {
-    it.detail = it.cmd;
+    it.detail = it.custom ? `${it.cmd} …` : it.cmd;
   }
   return items;
+}
+
+/** For a Custom command… pick: ask for the arguments, remember them, and return the full command (undefined if cancelled). */
+async function resolveWaitPick(pick: WaitCmdItem): Promise<string | undefined> {
+  if (!pick.custom) {
+    return pick.cmd;
+  }
+  const last = extContext?.workspaceState.get<string>(LAST_WAIT_ARGS_KEY) ?? "";
+  const args = await vscode.window.showInputBox({
+    title: "Run with wait: custom command",
+    prompt: `Everything after ${WAIT_HELPER_NAME} — a script with its arguments, or -m module and its arguments. Remembered for this workspace.`,
+    placeHolder: "-m manim -ql main.py MyScene   |   -m pytest tests -k name   |   tools/run.py --flag",
+    value: last,
+    valueSelection: [0, last.length],
+    ignoreFocusOut: true,
+  });
+  const trimmed = args?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  await extContext?.workspaceState.update(LAST_WAIT_ARGS_KEY, trimmed);
+  return `${pick.cmd} ${trimmed}`;
 }
 
 async function copyWaitCommand(): Promise<void> {
@@ -627,41 +665,49 @@ async function copyWaitCommand(): Promise<void> {
   const file = activePythonFile();
   const pick = await vscode.window.showQuickPick(waitCommandItems(file, false), {
     title: "Copy Run-with-Wait Command",
-    placeHolder: file ? "What should the copied command run?" : "Open a Python file to get commands for it, or copy a prefix",
+    placeHolder: file ? "What should the copied command run?" : "Open a Python file to get commands for it, or use a custom command / prefix",
     matchOnDetail: true,
   });
   if (!pick) {
     return;
   }
-  await vscode.env.clipboard.writeText(pick.cmd);
-  log(`copied run-with-wait command: ${pick.cmd}`);
-  if (pick.cmd === helper) {
+  const cmd = await resolveWaitPick(pick);
+  if (!cmd) {
+    return;
+  }
+  await vscode.env.clipboard.writeText(cmd);
+  log(`copied run-with-wait command: ${cmd}`);
+  if (cmd === helper) {
     vscode.window.setStatusBarMessage(`$(check) Copied path of ${WAIT_HELPER_NAME}`, 5000);
     return;
   }
   const mode = settings().autoAttachWaiting;
   vscode.window.showInformationMessage(
-    `Copied: ${pick.cmd.trim()}  — run it in any terminal or SSH session on this host. The process pauses until the debugger attaches${
+    `Copied: ${cmd.trim()}  — run it in any terminal or SSH session on this host. The process pauses until the debugger attaches${
       mode === "never" ? "; you'll be asked to attach when it starts waiting" : mode === "always" ? ", which happens automatically" : ", automatically when it runs inside this workspace"
     }.`,
   );
 }
 
-/** Set breakpoints, run this: the file starts in a terminal, pauses, and the debugger lands on the first breakpoint. */
+/** Set breakpoints, run this: the command starts in a terminal, pauses, and the debugger lands on the first breakpoint. */
 async function runWithWait(): Promise<void> {
   const file = activePythonFile();
-  if (!file) {
-    vscode.window.showInformationMessage("Open the Python file (or test file) you want to run with wait, then run this command again.");
-    return;
-  }
   const helper = waitHelperPath();
   if (!fs.existsSync(helper)) {
     vscode.window.showErrorMessage(`Run-with-wait helper not found at ${helper}. Check attach.waitHelperPath.`);
     return;
   }
   const items = waitCommandItems(file, true);
-  const pick = await vscode.window.showQuickPick(items, { title: "Run Current File with Wait", placeHolder: "Runs in a terminal and waits for the debugger", matchOnDetail: true });
+  const pick = await vscode.window.showQuickPick(items, {
+    title: "Run with Wait",
+    placeHolder: file ? "Runs in a terminal and waits for the debugger" : "No Python file open — run the last command again, or a custom one",
+    matchOnDetail: true,
+  });
   if (!pick) {
+    return;
+  }
+  const cmd = await resolveWaitPick(pick);
+  if (!cmd) {
     return;
   }
   const doc = vscode.window.activeTextEditor?.document;
@@ -674,8 +720,8 @@ async function runWithWait(): Promise<void> {
     term = vscode.window.createTerminal({ name: WAIT_TERMINAL_NAME, cwd: folder });
   }
   term.show(true);
-  term.sendText(pick.cmd, true);
-  log(`run-with-wait: sent to terminal "${WAIT_TERMINAL_NAME}": ${pick.cmd}`);
+  term.sendText(cmd, true);
+  log(`run-with-wait: sent to terminal "${WAIT_TERMINAL_NAME}": ${cmd}`);
 }
 
 function updateStatusBar(): void {

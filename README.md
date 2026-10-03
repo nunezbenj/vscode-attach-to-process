@@ -49,7 +49,7 @@ It pairs well with [PyCharm-like Evaluate Expression](https://marketplace.visual
 | Action | How |
 | --- | --- |
 | Attach to a running process | The **plug icon in the activity bar** (left), the plug icon next to the Run/Debug button in the editor title bar (Python files), `Ctrl+Alt+A`, the **Attach** status-bar item, the plug on the debug toolbar, or Command Palette → *Attach: Attach to Running Python Process…* |
-| Debug a run that finishes too fast | *Attach: Copy Run-with-Wait Command* (paste it into any terminal) or `Ctrl+Alt+W` / *Run Current File with Wait* (runs the open file, or pytest on it, in a terminal) — the process pauses until the debugger is attached |
+| Debug a run that finishes too fast | `Ctrl+Alt+W` / *Run with Wait* (the open file, pytest on it, the last command again, or a custom command — in a terminal) or *Attach: Copy Run-with-Wait Command* to paste the same into any terminal — the process pauses until the debugger is attached |
 | Stop a process (like the red Stop button) | The stop button on the debug toolbar, or on any row in the Attach panel — disconnects, sends SIGTERM, offers SIGKILL if needed |
 | Refresh / show tooling processes | Buttons in the picker's title bar |
 | Connect to a script started with `--listen` | Pick it in the list (marked *listening*), or *Attach: Connect to Listening debugpy (host:port)…* |
@@ -67,7 +67,7 @@ python ~/.vscode-server/extensions/nunezbenj.python-attach-to-process-1.3.0/reso
 python …/waitattach.py [-t SECONDS] script.py --your args      # -t 0 = wait forever; default 60 s, then it runs anyway
 ```
 
-You never type that path: **Attach: Copy Run-with-Wait Command** puts the right line on the clipboard (for the open file, for pytest on it, or just the prefix so you can add your own arguments), and `Ctrl+Alt+W` / **Run Current File with Wait** runs it in a terminal for you. The command is plain Python with no dependencies, so it works in the integrated terminal, an SSH session, `tmux` — anywhere on that host.
+You never type that path: **Attach: Copy Run-with-Wait Command** puts the right line on the clipboard, and `Ctrl+Alt+W` / **Run with Wait** runs it in a terminal for you. Both offer the same choices: the command you used last time in this workspace (*Run again*), the open file or pytest on it, and **Custom command…** for anything else — you type what comes after `waitattach.py` (`-m manim -ql main.py MyScene`, `-m pytest tests -k name`, `tools/run.py --flag`) and it is remembered, so the next time it is one keystroke and Enter. The command is plain Python with no dependencies, so it works in the integrated terminal, an SSH session, `tmux` — anywhere on that host.
 
 What happens next:
 
