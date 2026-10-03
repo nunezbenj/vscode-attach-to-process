@@ -12,3 +12,4 @@ generate_icon.py
 TODO.md
 images/icon.svg
 out/test/**
+images/*.gif
