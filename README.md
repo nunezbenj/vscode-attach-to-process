@@ -10,7 +10,9 @@ Attach the VS Code Python debugger to a **script that is already running** — f
 
 Same effect as adding an attach entry to `.vscode/launch.json` and launching from the IDE, minus the ceremony.
 
-![Attached to a script started from a terminal: the Attach panel row shows the process, the breakpoint is hit, the Debug Console shows the injection](images/attach-demo.png)
+![A manim render started in the terminal, attached from the Attach panel: the breakpoint inside a per-frame updater is hit, locals are inspected, the debugger is disconnected and the render continues](images/attach-demo.gif)
+
+*A render started in a terminal. The row's tooltip shows the full command line, cwd and interpreter; one click attaches, the breakpoint inside a per-frame updater fires on the next frame, and after a disconnect the render carries on.*
 
 ## Why
 
@@ -61,6 +63,10 @@ Try it with the bundled sample: run `python3 test-python/sleeper.py --tag demo` 
 ### Runs that finish too fast: run with wait
 
 Attaching only works while the process exists. A pytest file or a quick script is gone before you can pick it — and adding a `launch.json` entry for each of them is exactly the ceremony this extension is meant to remove. So the extension ships a tiny helper, `waitattach.py`, that runs your program only once a debugger is attached:
+
+![Run with wait: the command is copied from the picker, pasted into a terminal, the process shows up as waiting, the debugger attaches by itself and stops on the first line of the scene](images/run-with-wait-demo.gif)
+
+*The same render, this time through the helper. The picker remembers the last command; the process pauses, shows up as waiting, is attached automatically, and the debugger stops on the first statement — before manim has drawn a single frame.*
 
 ```bash
 python ~/.vscode-server/extensions/nunezbenj.python-attach-to-process-1.3.0/resources/waitattach.py -m pytest tests/test_x.py -k align
@@ -114,6 +120,7 @@ The picker shows it as *listening :5678* and connects on selection. This mode al
 
 - **Attach is not time travel.** Breakpoints bind when you attach; code that already ran is gone. Great for long-running loops, servers and test runners; for a script that finishes in a second, start it with [run with wait](#runs-that-finish-too-fast-run-with-wait) (or `--listen --wait-for-client`).
 - **One injection per process.** After you disconnect from a process attached by PID, debugpy cannot cleanly attach to it again (a second injection reports success but breakpoints never hit). Restart the script, or use the `--listen` path, which supports reconnecting. The picker warns you about this.
+- **Disconnect can crash the process.** debugpy stays inside after a disconnect and tears down its hooks while the program runs; a Python 3.12 process doing heavy native work (a 1080p manim render) has segfaulted a few seconds after disconnecting. If the run matters, leave the session attached until it finishes, or use **Stop** when you are done with it.
 - Processes belonging to other users are never listed (and could not be attached to anyway).
 
 ## Troubleshooting & Reporting Bugs

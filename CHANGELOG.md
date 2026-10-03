@@ -19,6 +19,8 @@
   - `attach.waitTimeout`, `attach.waitHelperPath` (use your own copy in `~/bin`)
 - `test-python/quick.py` and `test-python/e2e_wait.py` (breakpoint on the first line of a program
   that exits in a blink, verified through a real injection)
+- README: two demo GIFs — attaching to a running render, and the same render through run with wait;
+  a note that disconnecting can crash a process doing heavy native work (prefer Stop, or stay attached)
 - Fixed: the *injecting debugpy…* notification could stay open forever. VS Code 1.138 reports the
   session start only after debugpy has answered the attach, and that event reset the recorded
   state; the notification now settles on the recorded state, whatever the event order.
