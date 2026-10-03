@@ -67,7 +67,7 @@ python ~/.vscode-server/extensions/nunezbenj.python-attach-to-process-1.3.0/reso
 python …/waitattach.py [-t SECONDS] script.py --your args      # -t 0 = wait forever; default 60 s, then it runs anyway
 ```
 
-You never type that path: **Attach: Copy Run-with-Wait Command** puts the right line on the clipboard, and `Ctrl+Alt+W` / **Run with Wait** runs it in a terminal for you. Both offer the same choices: the command you used last time in this workspace (*Run again*), the open file or pytest on it, and **Custom command…** for anything else — you type what comes after `waitattach.py` (`-m manim -ql main.py MyScene`, `-m pytest tests -k name`, `tools/run.py --flag`) and it is remembered, so the next time it is one keystroke and Enter. The command is plain Python with no dependencies, so it works in the integrated terminal, an SSH session, `tmux` — anywhere on that host.
+You never type that path: **Attach: Copy Run-with-Wait Command** puts the right line on the clipboard, and `Ctrl+Alt+W` / **Run with Wait** runs it in a terminal for you. The generated line uses the interpreter selected in VS Code by absolute path, so it runs the same Python in any terminal, activated or not — check the status bar shows the venv you mean. Both offer the same choices: the command you used last time in this workspace (*Run again*), the open file or pytest on it, and **Custom command…** for anything else — you type what comes after `waitattach.py` (`-m manim -ql main.py MyScene`, `-m pytest tests -k name`, `tools/run.py --flag`) and it is remembered, so the next time it is one keystroke and Enter. The command is plain Python with no dependencies, so it works in the integrated terminal, an SSH session, `tmux` — anywhere on that host.
 
 What happens next:
 

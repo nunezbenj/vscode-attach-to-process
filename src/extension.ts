@@ -598,16 +598,44 @@ interface WaitCmdItem extends vscode.QuickPickItem {
 }
 
 /**
+ * The interpreter the Python extension has selected for this workspace, by absolute path, so a
+ * generated command runs the same Python in any terminal — before or without venv activation.
+ * Falls back to plain `python` when the Python extension is not there.
+ */
+async function selectedPythonInterpreter(): Promise<string> {
+  try {
+    const ext = vscode.extensions.getExtension("ms-python.python");
+    if (!ext) {
+      return "python";
+    }
+    const api = ext.isActive ? ext.exports : await ext.activate();
+    const envs = api?.environments;
+    if (!envs) {
+      return "python";
+    }
+    const resource = vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    const envPath = envs.getActiveEnvironmentPath(resource);
+    const resolved = await envs.resolveEnvironment(envPath);
+    const exe: string | undefined = resolved?.executable?.uri?.fsPath ?? envPath?.path;
+    return exe && fs.existsSync(exe) ? exe : "python";
+  } catch (e) {
+    log(`run-with-wait: could not read the selected interpreter (${(e as Error).message}); using "python"`);
+    return "python";
+  }
+}
+
+/**
  * The command variants offered by Copy / Run with wait: the command used last time in this
  * workspace first, then the open file (pytest first for test files), then a custom command —
  * anything the file-based items cannot express, like `-m manim -ql main.py MyScene`.
  */
-function waitCommandItems(file: string | undefined, forRun: boolean): WaitCmdItem[] {
+async function waitCommandItems(file: string | undefined, forRun: boolean): Promise<WaitCmdItem[]> {
   const s = settings();
   const home = os.homedir();
   const helper = tildePath(waitHelperPath(), home);
   const timeout = s.waitTimeout;
-  const prefix = waitCommand(helper, {}, timeout);
+  const python = tildePath(await selectedPythonInterpreter(), home);
+  const prefix = waitCommand(helper, {}, timeout, WAIT_DEFAULT_TIMEOUT, python);
   const items: WaitCmdItem[] = [];
   const lastArgs = extContext?.workspaceState.get<string>(LAST_WAIT_ARGS_KEY);
   if (lastArgs) {
@@ -616,15 +644,15 @@ function waitCommandItems(file: string | undefined, forRun: boolean): WaitCmdIte
   if (file) {
     const shown = tildePath(file, home);
     const base = path.basename(file);
-    const script: WaitCmdItem = { label: `$(file-code) Run ${base}`, cmd: waitCommand(helper, { script: shown }, timeout) };
-    const pytest: WaitCmdItem = { label: `$(beaker) Run pytest on ${base}`, cmd: waitCommand(helper, { module: "pytest", args: [shown] }, timeout) };
+    const script: WaitCmdItem = { label: `$(file-code) Run ${base}`, cmd: waitCommand(helper, { script: shown }, timeout, WAIT_DEFAULT_TIMEOUT, python) };
+    const pytest: WaitCmdItem = { label: `$(beaker) Run pytest on ${base}`, cmd: waitCommand(helper, { module: "pytest", args: [shown] }, timeout, WAIT_DEFAULT_TIMEOUT, python) };
     items.push(...(looksLikeTestFile(file) ? [pytest, script] : [script, pytest]));
   }
   items.push({ label: "$(edit) Custom command…", description: "anything after waitattach.py, e.g. -m manim -ql main.py MyScene", cmd: prefix, custom: true });
   if (!forRun) {
     items.push(
-      { label: "$(terminal) Prefix only — paste it and add your own script or -m module", cmd: waitCommand(helper, {}, timeout) + " " },
-      { label: "$(beaker) Prefix for pytest — paste it and add the test file or -k expression", cmd: waitCommand(helper, { module: "pytest" }, timeout) + " " },
+      { label: "$(terminal) Prefix only — paste it and add your own script or -m module", cmd: prefix + " " },
+      { label: "$(beaker) Prefix for pytest — paste it and add the test file or -k expression", cmd: waitCommand(helper, { module: "pytest" }, timeout, WAIT_DEFAULT_TIMEOUT, python) + " " },
       { label: `$(file) Path of the bundled ${WAIT_HELPER_NAME} — to copy it into ~/bin or an alias`, cmd: waitHelperPath() },
     );
   }
@@ -663,7 +691,7 @@ async function copyWaitCommand(): Promise<void> {
     return;
   }
   const file = activePythonFile();
-  const pick = await vscode.window.showQuickPick(waitCommandItems(file, false), {
+  const pick = await vscode.window.showQuickPick(await waitCommandItems(file, false), {
     title: "Copy Run-with-Wait Command",
     placeHolder: file ? "What should the copied command run?" : "Open a Python file to get commands for it, or use a custom command / prefix",
     matchOnDetail: true,
@@ -697,7 +725,7 @@ async function runWithWait(): Promise<void> {
     vscode.window.showErrorMessage(`Run-with-wait helper not found at ${helper}. Check attach.waitHelperPath.`);
     return;
   }
-  const items = waitCommandItems(file, true);
+  const items = await waitCommandItems(file, true);
   const pick = await vscode.window.showQuickPick(items, {
     title: "Run with Wait",
     placeHolder: file ? "Runs in a terminal and waits for the debugger" : "No Python file open — run the last command again, or a custom one",

@@ -7,7 +7,9 @@
   it with its normal `sys.argv`/`sys.path`. No `launch.json`, nothing added to your code.
   - **Attach: Copy Run-with-Wait Command** and **Run with Wait** / `Ctrl+Alt+W` (runs it in a
     terminal): the open file, pytest on it, **Custom command…** (anything after `waitattach.py`,
-    remembered per workspace and offered as *Run again* next time), or a prefix to complete
+    remembered per workspace and offered as *Run again* next time), or a prefix to complete.
+    Generated commands use the interpreter selected in VS Code by absolute path (no venv
+    activation needed in the terminal)
   - Waiting processes are detected the instant they start (the helper drops a marker file in
     `/tmp/waitattach-<uid>/`, watched with inotify — no polling) and are pinned to the top of the
     Attach panel as *waiting for debugger*
